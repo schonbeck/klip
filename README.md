@@ -91,7 +91,8 @@ next to the selection:
   testing without the portal).
 - To try it on a hotkey before milestone 4: Settings → Keyboard → View and
   Customize Shortcuts → Custom Shortcuts, command `/full/path/to/klip`.
-- GNOME may ask once whether klip may take screenshots; allow it.
+- GNOME asks once "Allow Apps to Take Screenshots?"; allow it (klip waits
+  for the answer). It can be changed later in Settings → Privacy.
 - GNOME plays a shutter sound and flashes the screen when klip starts (see
   known limits).
 - The portal saves its screenshot as a file (on GNOME in
@@ -119,6 +120,10 @@ next to the selection:
 - The selection can't be resized after release; drag a new one instead.
 - If the copy is taken over by a clipboard manager, klip exits right away
   (which is fine: the manager then holds the image).
+
+Building from a tarball without `.git`: set `KLIP_GIT_HASH=<commit>` so
+`--version` shows it. `tools/gnome-test/` has scripts for testing on a
+headless GNOME Shell.
 
 ## Code layout
 
