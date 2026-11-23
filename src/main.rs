@@ -1,13 +1,15 @@
 //! klip: a tiny native Wayland region screenshot tool.
 //!
-//! Flow: portal screenshot -> fullscreen selection window -> crop -> clipboard.
+//! Flow: portal screenshot -> fullscreen selection window -> crop ->
+//! clipboard, with an optional Save to a PNG file.
 
 mod capture;
 mod geometry;
 mod output;
 mod selector;
+mod ui;
 
-use gtk::{gdk, gio, glib, prelude::*};
+use gtk::{gio, glib, prelude::*};
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -18,7 +20,7 @@ const USAGE: &str = "\
 Usage: klip [OPTIONS]
 
 Take a region screenshot: drag a rectangle, the PNG goes to the clipboard.
-Press Esc to cancel.
+Then Save (Enter, Ctrl+S) writes it to a file; Cancel (Esc) closes.
 
 Options:
   --file <PNG>   Use an existing image instead of taking a screenshot (testing)
@@ -83,7 +85,7 @@ fn main() -> glib::ExitCode {
                     Source::File(path) => capture::from_file(path),
                 };
                 match texture {
-                    Ok(texture) => show_selector(&app, &texture),
+                    Ok(texture) => ui::show(&app, &texture),
                     Err(err) => {
                         eprintln!("klip: could not take screenshot: {err}");
                         failed.set(true);
@@ -101,65 +103,4 @@ fn main() -> glib::ExitCode {
     } else {
         status
     }
-}
-
-/// Show the frozen screenshot fullscreen and wait for a selection.
-fn show_selector(app: &gtk::Application, texture: &gdk::Texture) {
-    let window = gtk::ApplicationWindow::builder()
-        .application(app)
-        .title("klip")
-        .decorated(false)
-        .build();
-
-    let view = selector::SelectionView::new(
-        texture,
-        glib::clone!(
-            #[weak]
-            app,
-            #[weak]
-            window,
-            #[strong]
-            texture,
-            move |rect| on_selected(&app, window.upcast_ref(), &texture, rect)
-        ),
-    );
-    window.set_child(Some(&view));
-
-    let keys = gtk::EventControllerKey::new();
-    keys.connect_key_pressed(glib::clone!(
-        #[weak]
-        app,
-        #[upgrade_or]
-        glib::Propagation::Proceed,
-        move |_, key, _, _| {
-            if key == gdk::Key::Escape {
-                app.quit();
-                glib::Propagation::Stop
-            } else {
-                glib::Propagation::Proceed
-            }
-        }
-    ));
-    window.add_controller(keys);
-
-    window.fullscreen();
-    window.present();
-}
-
-/// The user finished dragging. `rect` is in screenshot pixels.
-///
-/// Milestone 2 hook: show the Save / Cancel toolbar next to the selection here.
-/// Milestone 3 hook: the annotation layer (arrows, lines, ellipses) is drawn on
-/// top of the cropped image before it is copied or saved.
-fn on_selected(
-    app: &gtk::Application,
-    window: &gtk::Window,
-    texture: &gdk::Texture,
-    rect: geometry::Rect,
-) {
-    let Some(px) = geometry::to_pixels(rect, texture.width(), texture.height()) else {
-        return;
-    };
-    let image = output::crop(texture, px);
-    output::copy_to_clipboard(app, window, &image);
 }
