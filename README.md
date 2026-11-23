@@ -84,16 +84,29 @@ next to the selection:
 - `klip` keeps running in the background after the window closes, because on Wayland the
   clipboard content is served by the app that copied it. It exits as soon as
   something else is copied, or after 10 minutes.
+- `KLIP_DEBUG=1 klip` prints debug info (version and git commit, screenshot
+  and window size, scale, selection, toolbar position). `klip --version`
+  shows the commit it was built from.
 - `klip --file some.png` uses an existing image instead of a screenshot (for
   testing without the portal).
 - To try it on a hotkey before milestone 4: Settings → Keyboard → View and
   Customize Shortcuts → Custom Shortcuts, command `/full/path/to/klip`.
 - GNOME may ask once whether klip may take screenshots; allow it.
+- GNOME plays a shutter sound and flashes the screen when klip starts (see
+  known limits).
 - The portal saves its screenshot as a file (on GNOME in
   `~/Pictures/Screenshots`); klip deletes that file after loading it, so the
   folder doesn't fill up with full-screen shots.
 
-## Known limits (milestone 1)
+## Known limits
+
+- **Shutter sound and flash on GNOME**: GNOME's screenshot portal always asks
+  GNOME Shell for a screenshot *with* flash, and Shell plays the
+  `screen-capture` sound with it. The portal has no option to turn either off,
+  and Shell's own screenshot D-Bus API only accepts calls from the portal and
+  GNOME's media-keys daemon. The sound obeys the system "event sounds"
+  setting: `gsettings set org.gnome.desktop.sound event-sounds false` silences
+  it, together with all other system sounds. The flash can't be turned off.
 
 - **Multi-monitor**: the selection window covers only the monitor it opens on
   (usually the one with the focused window). klip works out that monitor's

@@ -29,7 +29,10 @@ const CSS: &str = "
 struct Ui {
     app: gtk::Application,
     window: gtk::ApplicationWindow,
+    overlay: gtk::Overlay,
     toolbar: gtk::Box,
+    /// Current selection in widget coordinates; the toolbar sits next to it.
+    selection: Cell<Option<Rect>>,
     /// The full screenshot.
     texture: gdk::Texture,
     /// The cropped selection, once there is one.
@@ -56,7 +59,9 @@ pub fn show(app: &gtk::Application, texture: &gdk::Texture) {
     let ui = Rc::new(Ui {
         app: app.clone(),
         window,
+        overlay: overlay.clone(),
         toolbar,
+        selection: Cell::new(None),
         texture: texture.clone(),
         image: RefCell::default(),
         saving: Cell::new(false),
@@ -69,11 +74,41 @@ pub fn show(app: &gtk::Application, texture: &gdk::Texture) {
         ui,
         move |widget_rect, image_rect| ui.on_selected(widget_rect, image_rect)
     ));
+    // Position the toolbar at allocation time, from the overlay's real size.
+    overlay.connect_get_child_position(glib::clone!(
+        #[weak]
+        ui,
+        #[upgrade_or]
+        None,
+        move |_, child| (child == ui.toolbar.upcast_ref::<gtk::Widget>())
+            .then(|| ui.toolbar_rect())
+    ));
     ui.connect_buttons();
     ui.connect_keys();
 
     ui.window.fullscreen();
     ui.window.present();
+    test_select_hook(&view);
+}
+
+/// Test hook: `KLIP_TEST_SELECT=x,y,w,h` (widget coordinates) makes that
+/// selection shortly after startup, for testing without pointer input.
+fn test_select_hook(view: &SelectionView) {
+    let Ok(spec) = std::env::var("KLIP_TEST_SELECT") else {
+        return;
+    };
+    let n: Vec<f64> = spec
+        .split(',')
+        .filter_map(|v| v.trim().parse().ok())
+        .collect();
+    let [x, y, w, h] = n[..] else {
+        eprintln!("klip: KLIP_TEST_SELECT must be x,y,w,h");
+        return;
+    };
+    let view = view.clone();
+    glib::timeout_add_local_once(std::time::Duration::from_millis(800), move || {
+        view.finish_selection(Rect::new(x, y, w, h));
+    });
 }
 
 fn load_css() {
@@ -107,8 +142,6 @@ fn button(label: &str, icon: &str, tooltip: &str) -> gtk::Button {
 fn build_toolbar() -> gtk::Box {
     let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     toolbar.add_css_class("klip-toolbar");
-    toolbar.set_halign(gtk::Align::Start);
-    toolbar.set_valign(gtk::Align::Start);
     toolbar.set_visible(false);
 
     // Milestone 3: annotation tool buttons (arrow, line, ellipse, color) go
@@ -175,6 +208,7 @@ impl Ui {
         let Some(px) = geometry::to_pixels(image_rect, w, h) else {
             return;
         };
+        crate::debug!("selection {widget_rect:?} -> image pixels {px:?}");
         let image = output::crop(&self.texture, px);
         output::copy_to_clipboard(&self.window.clipboard(), &image);
         self.image.replace(Some(image));
@@ -182,19 +216,39 @@ impl Ui {
     }
 
     fn place_toolbar(&self, sel: Rect) {
+        self.selection.set(Some(sel));
         self.toolbar.set_visible(true);
+        self.overlay.queue_allocate();
+    }
+
+    /// Where the toolbar goes, in overlay coordinates: next to the selection,
+    /// or bottom-center if there is no selection or no usable size yet.
+    fn toolbar_rect(&self) -> gdk::Rectangle {
         let (_, tw, _, _) = self.toolbar.measure(gtk::Orientation::Horizontal, -1);
         let (_, th, _, _) = self.toolbar.measure(gtk::Orientation::Vertical, tw);
-        let (x, y) = geometry::toolbar_position(
-            sel,
-            tw as f64,
-            th as f64,
-            self.window.width() as f64,
-            self.window.height() as f64,
-            TOOLBAR_GAP,
+        let (w, h) = (self.overlay.width(), self.overlay.height());
+        let (x, y) = match self.selection.get() {
+            Some(sel) if w > 0 && h > 0 => geometry::toolbar_position(
+                sel,
+                tw as f64,
+                th as f64,
+                w as f64,
+                h as f64,
+                TOOLBAR_GAP,
+            ),
+            _ => geometry::bottom_center(tw as f64, th as f64, w as f64, h as f64),
+        };
+        let rect = gdk::Rectangle::new(x.round() as i32, y.round() as i32, tw, th);
+        crate::debug!(
+            "window {}x{} scale {} (surface {:?}), selection {:?}, toolbar {:?}",
+            w,
+            h,
+            self.window.scale_factor(),
+            self.window.surface().map(|s| s.scale()),
+            self.selection.get(),
+            rect
         );
-        self.toolbar.set_margin_start(x.round() as i32);
-        self.toolbar.set_margin_top(y.round() as i32);
+        rect
     }
 
     /// Save the selection through a file dialog (the portal FileChooser on

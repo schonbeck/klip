@@ -131,26 +131,31 @@ impl SelectionView {
                 let Some((x, y)) = gesture.start_point() else {
                     return;
                 };
-                view.set_selection(Some(Rect::from_points(x, y, x + dx, y + dy)));
-                match view.imp().selection.get() {
-                    Some(sel) if sel.w >= MIN_SIZE && sel.h >= MIN_SIZE => {
-                        let image_rect = geometry::widget_to_image(
-                            sel,
-                            view.width() as f64,
-                            view.height() as f64,
-                            view.source_region(),
-                        );
-                        view.imp().committed.set(Some(sel));
-                        if let Some(cb) = view.imp().on_selected.borrow().as_ref() {
-                            cb(sel, image_rect);
-                        }
-                    }
-                    // Just a click: keep the previous selection, if any.
-                    _ => view.set_selection(view.imp().committed.get()),
-                }
+                view.finish_selection(Rect::from_points(x, y, x + dx, y + dy));
             }
         ));
         self.add_controller(drag);
+    }
+
+    /// End a selection (from a drag, or programmatically for tests).
+    pub fn finish_selection(&self, sel: Rect) {
+        self.set_selection(Some(sel));
+        match self.imp().selection.get() {
+            Some(sel) if sel.w >= MIN_SIZE && sel.h >= MIN_SIZE => {
+                let image_rect = geometry::widget_to_image(
+                    sel,
+                    self.width() as f64,
+                    self.height() as f64,
+                    self.source_region(),
+                );
+                self.imp().committed.set(Some(sel));
+                if let Some(cb) = self.imp().on_selected.borrow().as_ref() {
+                    cb(sel, image_rect);
+                }
+            }
+            // Just a click: keep the previous selection, if any.
+            _ => self.set_selection(self.imp().committed.get()),
+        }
     }
 
     fn set_selection(&self, sel: Option<Rect>) {

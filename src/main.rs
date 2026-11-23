@@ -14,6 +14,24 @@ use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+/// `eprintln!` when the environment variable `KLIP_DEBUG` is set.
+#[macro_export]
+macro_rules! debug {
+    ($($arg:tt)*) => {
+        if $crate::debug_enabled() {
+            eprintln!("klip[debug]: {}", format!($($arg)*));
+        }
+    };
+}
+
+pub fn debug_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("KLIP_DEBUG").is_some_and(|v| !v.is_empty() && v != "0"))
+}
+
+/// Version plus the git commit it was built from, to spot stale builds.
+const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("KLIP_GIT_HASH"), ")");
+
 const APP_ID: &str = "io.github.schonbeck.klip";
 
 const USAGE: &str = "\
@@ -42,7 +60,7 @@ fn parse_args() -> Result<Source, String> {
                 std::process::exit(0);
             }
             "-V" | "--version" => {
-                println!("klip {}", env!("CARGO_PKG_VERSION"));
+                println!("klip {VERSION}");
                 std::process::exit(0);
             }
             "--file" => {
@@ -63,6 +81,8 @@ fn main() -> glib::ExitCode {
             return glib::ExitCode::FAILURE;
         }
     };
+
+    debug!("klip {VERSION}");
 
     // NON_UNIQUE: every hotkey press is its own short-lived process. A new
     // capture taking the clipboard makes the previous klip exit.

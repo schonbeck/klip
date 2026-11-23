@@ -124,6 +124,11 @@ pub fn toolbar_position(sel: Rect, tw: f64, th: f64, w: f64, h: f64, gap: f64) -
     (x, y.clamp(0.0, (h - th).max(0.0)))
 }
 
+/// Fallback toolbar position: bottom center, 24 px above the edge.
+pub fn bottom_center(tw: f64, th: f64, w: f64, h: f64) -> (f64, f64) {
+    (((w - tw) / 2.0).max(0.0), (h - th - 24.0).max(0.0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
