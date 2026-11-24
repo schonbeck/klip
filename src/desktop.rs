@@ -28,6 +28,31 @@ pub fn exe() -> String {
     }
 }
 
+/// Whether a system-wide (e.g. the .deb's) desktop file for klip exists.
+fn system_launcher() -> bool {
+    glib::system_data_dirs().iter().any(|d| {
+        d.join("applications")
+            .join(format!("{APP_ID}.desktop"))
+            .exists()
+    })
+}
+
+/// klip's own icon if it's installed (the .deb ships it), else a stock one.
+pub fn icon_name() -> &'static str {
+    let installed = std::iter::once(glib::user_data_dir())
+        .chain(glib::system_data_dirs())
+        .any(|d| {
+            d.join("icons/hicolor/scalable/apps")
+                .join(format!("{APP_ID}.svg"))
+                .exists()
+        });
+    if installed {
+        APP_ID
+    } else {
+        "applets-screenshooter"
+    }
+}
+
 fn entry(exec: &str, extra: &str) -> String {
     format!(
         "[Desktop Entry]\n\
@@ -35,10 +60,11 @@ fn entry(exec: &str, extra: &str) -> String {
          Name=klip\n\
          Comment=Region screenshot: select, annotate, copy or save\n\
          Exec={exec}\n\
-         Icon=applets-screenshooter\n\
+         Icon={icon}\n\
          Terminal=false\n\
          Categories=Utility;Graphics;\n\
-         {extra}"
+         {extra}",
+        icon = icon_name()
     )
 }
 
@@ -55,6 +81,10 @@ fn write_if_changed(path: PathBuf, content: &str) -> io::Result<()> {
 /// `~/.local/share/applications/<app id>.desktop`: opens the settings; its
 /// "Take Screenshot" action captures.
 pub fn install_launcher() -> io::Result<()> {
+    if system_launcher() {
+        // Installed from a package, which ships its own.
+        return Ok(());
+    }
     let exe = exe();
     let content = entry(
         &format!("{exe} --settings"),

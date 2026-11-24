@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=klip
+GenericName=Screenshot Tool
+Comment=Region screenshot: select, annotate, copy or save
+Exec=klip --settings
+Icon=io.github.schonbeck.klip
+Terminal=false
+Categories=Utility;Graphics;
+Keywords=screenshot;capture;snip;clipboard;
+StartupNotify=true
+Actions=capture;
+
+[Desktop Action capture]
+Name=Take Screenshot
+Exec=klip
