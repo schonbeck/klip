@@ -17,6 +17,7 @@ pub enum Command {
 
 struct KlipTray {
     tx: UnboundedSender<(Command, Option<String>)>,
+    icon: String,
 }
 
 impl KlipTray {
@@ -35,7 +36,7 @@ impl ksni::Tray for KlipTray {
         "klip".into()
     }
     fn icon_name(&self) -> String {
-        "applets-screenshooter-symbolic".into()
+        self.icon.clone()
     }
     fn tool_tip(&self) -> ksni::ToolTip {
         ksni::ToolTip {
@@ -88,7 +89,13 @@ impl Drop for Tray {
 /// command and the click's activation token. `None` if there is no tray.
 pub async fn spawn(on_command: impl Fn(Command, Option<String>) + 'static) -> Option<Tray> {
     let (tx, mut rx) = unbounded();
-    let handle = match (KlipTray { tx }).spawn().await {
+    let handle = match (KlipTray {
+        tx,
+        icon: crate::desktop::icon_name().into(),
+    })
+    .spawn()
+    .await
+    {
         Ok(handle) => handle,
         Err(err) => {
             crate::debug!("no tray icon: {err}");

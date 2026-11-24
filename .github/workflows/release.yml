@@ -1,0 +1,102 @@
+name: Release
+
+# Tag push vX.Y.Z: build the .deb and source tarball and publish a GitHub
+# Release. Pull requests and manual runs build the same files as a workflow
+# artifact only (nothing is published).
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "data/**"
+      - "packaging/**"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deb:
+    runs-on: ubuntu-latest
+    # Build on the target release, so the .deb's library minimums
+    # (glibc, GTK) match Ubuntu 26.04.
+    container: ubuntu:26.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential pkg-config libgtk-4-dev git curl ca-certificates dpkg-dev
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Version
+        id: v
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if [ "${GITHUB_REF_TYPE}" = tag ] && [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match Cargo.toml version ${version}" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "hash=$(git describe --always --dirty --exclude '*')" >> "$GITHUB_OUTPUT"
+      - name: cargo-deb
+        run: cargo install cargo-deb --locked
+      - name: Build .deb
+        env:
+          KLIP_GIT_HASH: ${{ steps.v.outputs.hash }}
+        run: |
+          cargo deb
+          mkdir -p dist
+          cp target/debian/klip_*_amd64.deb "dist/klip_${{ steps.v.outputs.version }}_amd64.deb"
+          dpkg-deb -I dist/*.deb
+          dpkg-deb -c dist/*.deb
+          ./target/release/klip --version
+      - name: Source tarball
+        run: |
+          v=${{ steps.v.outputs.version }}
+          git archive --format=tar.gz --prefix="klip-${v}/" -o "dist/klip-${v}.tar.gz" HEAD
+          cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: klip-${{ steps.v.outputs.version }}
+          path: dist/*
+      - name: GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+
+  homebrew:
+    # Bumps Formula/klip.rb in schonbeck/homebrew-tap. Needs a repository
+    # secret HOMEBREW_TAP_TOKEN (fine-grained token with contents:write on the
+    # tap); without it this job is skipped and the bump is manual
+    # (packaging/bump-formula.sh).
+    needs: deb
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    env:
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bump formula
+        if: env.TAP_TOKEN != ''
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/schonbeck/homebrew-tap.git" tap
+          packaging/bump-formula.sh "$v" tap/Formula/klip.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "klip ${v}" && git push
