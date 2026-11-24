@@ -1,4 +1,4 @@
-//! Annotations (arrow, line, ellipse): the shapes, how to draw them with
+//! Annotations (arrow, line, rectangle, ellipse): the shapes, how to draw them with
 //! cairo, and baking them into the cropped image.
 
 use gtk::{cairo, gdk, glib, prelude::*};
@@ -14,6 +14,7 @@ pub enum Tool {
     Select,
     Arrow,
     Line,
+    Rectangle,
     Ellipse,
 }
 
@@ -69,6 +70,14 @@ impl Shape {
                 cr.line_to(rx, ry);
                 cr.close_path();
                 cr.fill_preserve().ok();
+                cr.stroke().ok();
+            }
+            Tool::Rectangle => {
+                let (w, h) = ((x1 - x0).abs(), (y1 - y0).abs());
+                if w < 0.5 || h < 0.5 {
+                    return;
+                }
+                cr.rectangle(x0.min(x1), y0.min(y1), w, h);
                 cr.stroke().ok();
             }
             Tool::Ellipse => {
@@ -153,6 +162,32 @@ mod tests {
         let at = |x: usize, y: usize| &px[y * stride + x * 4..y * stride + x * 4 + 4];
         assert_eq!(at(20, 10), [255, 0, 0, 255]); // on the line
         assert_eq!(at(20, 2), [255, 255, 255, 255]); // above it
+    }
+
+    #[test]
+    fn bake_draws_a_rectangle_outline() {
+        let (w, h) = (40, 40);
+        let white = glib::Bytes::from_owned(vec![255u8; (w * h * 4) as usize]);
+        let image: gdk::Texture =
+            gdk::MemoryTexture::new(w, h, gdk::MemoryFormat::R8g8b8a8, &white, w as usize * 4)
+                .upcast();
+        // Dragged from bottom-right to top-left.
+        let rect = Shape {
+            tool: Tool::Rectangle,
+            start: (30.0, 30.0),
+            end: (10.0, 10.0),
+            color: gdk::RGBA::new(0.0, 0.0, 1.0, 1.0),
+        };
+        let baked = bake(&image, &[rect], (0.0, 0.0), (1.0, 1.0)).unwrap();
+        let mut dl = gdk::TextureDownloader::new(&baked);
+        dl.set_format(gdk::MemoryFormat::R8g8b8a8);
+        let (px, stride) = dl.download_bytes();
+        let at = |x: usize, y: usize| &px[y * stride + x * 4..y * stride + x * 4 + 4];
+        assert_eq!(at(10, 20), [0, 0, 255, 255]); // left edge
+        assert_eq!(at(30, 20), [0, 0, 255, 255]); // right edge
+        assert_eq!(at(20, 10), [0, 0, 255, 255]); // top edge
+        assert_eq!(at(20, 20), [255, 255, 255, 255]); // inside: outline only
+        assert_eq!(at(2, 2), [255, 255, 255, 255]); // outside
     }
 
     #[test]

@@ -86,14 +86,19 @@ pub fn extra_icon_dir() -> Option<PathBuf> {
     (!searched && icon_in(&share).exists()).then(|| share.join("icons"))
 }
 
+/// Whether klip's icon is in an icon theme dir every app searches (the .deb's
+/// `/usr/share/icons`, or `~/.local/share/icons`).
+pub fn themed_icon_installed() -> bool {
+    std::iter::once(glib::user_data_dir())
+        .chain(glib::system_data_dirs())
+        .any(|d| icon_in(&d).exists())
+}
+
 /// klip's own icon if it's installed (the .deb and Homebrew ship it), else a
 /// stock one. With Homebrew this relies on `extra_icon_dir` being added to
 /// the icon theme's search path.
 pub fn icon_name() -> &'static str {
-    let installed = std::iter::once(glib::user_data_dir())
-        .chain(glib::system_data_dirs())
-        .any(|d| icon_in(&d).exists());
-    if installed || extra_icon_dir().is_some() {
+    if themed_icon_installed() || extra_icon_dir().is_some() {
         APP_ID
     } else {
         "applets-screenshooter"
