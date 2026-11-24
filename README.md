@@ -3,8 +3,8 @@
 A tiny, native Wayland region screenshot tool for Linux. Press a hotkey, drag a
 rectangle, annotate if you like, and the PNG is on your clipboard.
 
-Status: milestone 1 (capture, select, copy to clipboard). No packages yet;
-build from source.
+Status: milestone 2 (capture, select, copy to clipboard, Save / Cancel). No
+packages yet; build from source.
 
 ## What it does
 
@@ -71,41 +71,71 @@ cargo build --release
 ```
 
 The screen freezes and dims. Drag a rectangle with the left mouse button; when
-you let go, the region is on the clipboard and the window disappears. Paste it
-into any app (e.g. a chat, GIMP, LibreOffice). Press Esc to cancel.
+you let go, the region is **already on the clipboard** and a toolbar appears
+next to the selection:
 
-- `klip` keeps running in the background after the copy, because on Wayland the
+- **Save** (or Enter, Ctrl+S): pick a file name (default
+  `~/Pictures/klip-YYYY-MM-DD_HH-MM-SS.png`) and write the PNG. The window
+  then closes; the clipboard copy stays.
+- **Cancel** (or Esc): close the window. The clipboard copy stays (see below).
+- Drag again to replace the selection (it's copied again).
+- Esc before selecting anything exits without touching the clipboard.
+
+- `klip` keeps running in the background after the window closes, because on Wayland the
   clipboard content is served by the app that copied it. It exits as soon as
   something else is copied, or after 10 minutes.
+- `KLIP_DEBUG=1 klip` prints debug info (version and git commit, screenshot
+  and window size, scale, selection, toolbar position). `klip --version`
+  shows the commit it was built from.
 - `klip --file some.png` uses an existing image instead of a screenshot (for
   testing without the portal).
 - To try it on a hotkey before milestone 4: Settings → Keyboard → View and
   Customize Shortcuts → Custom Shortcuts, command `/full/path/to/klip`.
-- GNOME may ask once whether klip may take screenshots; allow it.
+- GNOME asks once "Allow Apps to Take Screenshots?"; allow it (klip waits
+  for the answer). It can be changed later in Settings → Privacy.
+- GNOME plays a shutter sound and flashes the screen when klip starts (see
+  known limits).
 - The portal saves its screenshot as a file (on GNOME in
   `~/Pictures/Screenshots`); klip deletes that file after loading it, so the
   folder doesn't fill up with full-screen shots.
 
-## Known limits (milestone 1)
+## Known limits
+
+- **Shutter sound and flash on GNOME**: GNOME's screenshot portal always asks
+  GNOME Shell for a screenshot *with* flash, and Shell plays the
+  `screen-capture` sound with it. The portal has no option to turn either off,
+  and Shell's own screenshot D-Bus API only accepts calls from the portal and
+  GNOME's media-keys daemon. The sound obeys the system "event sounds"
+  setting: `gsettings set org.gnome.desktop.sound event-sounds false` silences
+  it, together with all other system sounds. The flash can't be turned off.
 
 - **Multi-monitor**: the selection window covers only the monitor it opens on
   (usually the one with the focused window). klip works out that monitor's
   part of the portal's all-monitors screenshot from the monitor layout; with
   monitors at *different* scale factors that mapping may be slightly off.
-- No Save / Cancel buttons and no annotations yet (milestones 2 and 3); the
-  selection is copied immediately on release.
-- The selection can't be adjusted after release; start over instead.
+- No annotations yet (milestone 3).
+- Cancel after a selection does not undo the clipboard copy (it was made the
+  moment you let go). Restoring the previous clipboard isn't possible in
+  general on Wayland, and "copy, then just close" is the common case.
+- The selection can't be resized after release; drag a new one instead.
 - If the copy is taken over by a clipboard manager, klip exits right away
   (which is fine: the manager then holds the image).
 
+Building from a tarball without `.git`: set `KLIP_GIT_HASH=<commit>` so
+`--version` shows it. `tools/gnome-test/` has scripts for testing on a
+headless GNOME Shell.
+
 ## Code layout
 
-- `src/main.rs`: startup, argument parsing, the selection window, and the
-  `on_selected` hook where the Save/Cancel toolbar and annotations will go.
+- `src/main.rs`: startup and argument parsing.
+- `src/ui.rs`: the fullscreen window, the Save / Cancel toolbar (with an empty
+  `tools` box where the milestone 3 annotation buttons go), keyboard
+  shortcuts and the file dialog.
 - `src/capture.rs`: portal screenshot via ashpd (or `--file`).
 - `src/selector.rs`: the fullscreen selection widget (drawing and dragging).
 - `src/geometry.rs`: rectangle math, HiDPI and monitor mapping (unit tested).
-- `src/output.rs`: crop and clipboard, and staying alive while we own it.
+- `src/output.rs`: crop, clipboard, PNG saving, and staying alive while we
+  own the clipboard.
 
 ## Packaging plan
 

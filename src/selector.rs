@@ -12,8 +12,8 @@ const OUTLINE_WIDTH: f32 = 2.0;
 /// and ignored.
 const MIN_SIZE: f64 = 3.0;
 
-/// Callback receiving a finished selection in image pixels.
-type SelectedFn = Box<dyn Fn(Rect)>;
+/// Callback receiving a finished selection: (widget coordinates, image pixels).
+type SelectedFn = Box<dyn Fn(Rect, Rect)>;
 
 mod imp {
     use super::*;
@@ -24,7 +24,9 @@ mod imp {
         pub texture: RefCell<Option<gdk::Texture>>,
         /// Current selection in widget coordinates.
         pub selection: Cell<Option<Rect>>,
-        /// Called with the selection in image pixels when the drag ends.
+        /// The last finished selection (widget coordinates).
+        pub committed: Cell<Option<Rect>>,
+        /// Called when a drag ends with a usable selection.
         pub on_selected: RefCell<Option<SelectedFn>>,
     }
 
@@ -93,16 +95,20 @@ glib::wrapper! {
 }
 
 impl SelectionView {
-    /// `on_selected` receives the finished selection in image pixels.
-    pub fn new(texture: &gdk::Texture, on_selected: impl Fn(Rect) + 'static) -> Self {
+    pub fn new(texture: &gdk::Texture) -> Self {
         let view: Self = glib::Object::new();
         view.imp().texture.replace(Some(texture.clone()));
-        view.imp().on_selected.replace(Some(Box::new(on_selected)));
         view.set_hexpand(true);
         view.set_vexpand(true);
         view.set_cursor_from_name(Some("crosshair"));
         view.setup_drag();
         view
+    }
+
+    /// `f` receives each finished selection, in widget coordinates and in
+    /// image pixels. Dragging again replaces the selection.
+    pub fn connect_selected(&self, f: impl Fn(Rect, Rect) + 'static) {
+        self.imp().on_selected.replace(Some(Box::new(f)));
     }
 
     fn setup_drag(&self) {
@@ -125,25 +131,31 @@ impl SelectionView {
                 let Some((x, y)) = gesture.start_point() else {
                     return;
                 };
-                view.set_selection(Some(Rect::from_points(x, y, x + dx, y + dy)));
-                match view.imp().selection.get() {
-                    Some(sel) if sel.w >= MIN_SIZE && sel.h >= MIN_SIZE => {
-                        let image_rect = geometry::widget_to_image(
-                            sel,
-                            view.width() as f64,
-                            view.height() as f64,
-                            view.source_region(),
-                        );
-                        if let Some(cb) = view.imp().on_selected.borrow().as_ref() {
-                            cb(image_rect);
-                        }
-                    }
-                    // Just a click: forget it and let the user try again.
-                    _ => view.set_selection(None),
-                }
+                view.finish_selection(Rect::from_points(x, y, x + dx, y + dy));
             }
         ));
         self.add_controller(drag);
+    }
+
+    /// End a selection (from a drag, or programmatically for tests).
+    pub fn finish_selection(&self, sel: Rect) {
+        self.set_selection(Some(sel));
+        match self.imp().selection.get() {
+            Some(sel) if sel.w >= MIN_SIZE && sel.h >= MIN_SIZE => {
+                let image_rect = geometry::widget_to_image(
+                    sel,
+                    self.width() as f64,
+                    self.height() as f64,
+                    self.source_region(),
+                );
+                self.imp().committed.set(Some(sel));
+                if let Some(cb) = self.imp().on_selected.borrow().as_ref() {
+                    cb(sel, image_rect);
+                }
+            }
+            // Just a click: keep the previous selection, if any.
+            _ => self.set_selection(self.imp().committed.get()),
+        }
     }
 
     fn set_selection(&self, sel: Option<Rect>) {

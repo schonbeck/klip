@@ -1,0 +1,1 @@
+export XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus WAYLAND_DISPLAY=wayland-0 XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=GNOME PATH=$HOME/wlc/usr/bin:$HOME/.cargo/bin:$PATH

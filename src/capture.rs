@@ -16,6 +16,12 @@ pub async fn from_portal() -> Result<gdk::Texture, Box<dyn Error>> {
         .response()?;
     let file = gio::File::for_uri(response.uri().as_str());
     let texture = gdk::Texture::from_file(&file)?;
+    crate::debug!(
+        "portal screenshot {} ({}x{})",
+        file.uri(),
+        texture.width(),
+        texture.height()
+    );
 
     // The portal hands us the shot as a file (GNOME writes it to
     // ~/Pictures/Screenshots). It is only a transfer file for klip, so remove

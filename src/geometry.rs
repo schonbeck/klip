@@ -106,6 +106,29 @@ pub fn to_pixels(r: Rect, image_w: i32, image_h: i32) -> Option<PixelRect> {
     })
 }
 
+/// Top-left corner for a toolbar of size `tw` x `th` next to `sel`, inside
+/// an area of `w` x `h`: below the selection, right-aligned with it; above it
+/// if there is no room below; inside its bottom edge if neither fits. Always
+/// kept on screen.
+pub fn toolbar_position(sel: Rect, tw: f64, th: f64, w: f64, h: f64, gap: f64) -> (f64, f64) {
+    let x = (sel.x + sel.w - tw).clamp(0.0, (w - tw).max(0.0));
+    let below = sel.y + sel.h + gap;
+    let above = sel.y - gap - th;
+    let y = if below + th <= h {
+        below
+    } else if above >= 0.0 {
+        above
+    } else {
+        sel.y + sel.h - th - gap
+    };
+    (x, y.clamp(0.0, (h - th).max(0.0)))
+}
+
+/// Fallback toolbar position: bottom center, 24 px above the edge.
+pub fn bottom_center(tw: f64, th: f64, w: f64, h: f64) -> (f64, f64) {
+    (((w - tw) / 2.0).max(0.0), (h - th - 24.0).max(0.0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,5 +179,31 @@ mod tests {
             }
         );
         assert!(to_pixels(Rect::new(10.0, 10.0, 5.0, 5.0), 5, 5).is_none());
+    }
+
+    #[test]
+    fn toolbar_below_above_inside() {
+        let (w, h) = (1000.0, 800.0);
+        // Room below: right-aligned under the selection.
+        let sel = Rect::new(100.0, 100.0, 300.0, 200.0);
+        assert_eq!(
+            toolbar_position(sel, 200.0, 50.0, w, h, 8.0),
+            (200.0, 308.0)
+        );
+        // At the bottom: goes above.
+        let sel = Rect::new(100.0, 500.0, 300.0, 280.0);
+        assert_eq!(
+            toolbar_position(sel, 200.0, 50.0, w, h, 8.0),
+            (200.0, 442.0)
+        );
+        // Whole screen selected: inside, bottom right.
+        let sel = Rect::new(0.0, 0.0, w, h);
+        assert_eq!(
+            toolbar_position(sel, 200.0, 50.0, w, h, 8.0),
+            (800.0, 742.0)
+        );
+        // Narrow selection at the left edge: kept on screen.
+        let sel = Rect::new(0.0, 100.0, 50.0, 50.0);
+        assert_eq!(toolbar_position(sel, 200.0, 50.0, w, h, 8.0).0, 0.0);
     }
 }
