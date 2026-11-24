@@ -26,7 +26,9 @@ with no real input devices.
   Screenshots and the clipboard PNG go to `~/proof/`. The first virtual key
   after a session starts is swallowed (keymap setup), hence the leading
   `shift`. `klip` steps run `target/release/klip` with `KLIP_DEBUG=1` and
-  `KLIP_TEST_SELECT`.
+  `KLIP_TEST_SELECT`. Other steps: `["key","a"]` (any single character or
+  `esc`/`ret`/`shift`), `["ctrlkey","z"]`, `["drag",x0,y0,x1,y1]` (virtual
+  pointer, left button).
 
 Non-interactive screenshots need the permission GNOME asks for on first use
 ("Allow Apps to Take Screenshots?"). Without input it can be granted directly

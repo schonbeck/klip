@@ -1,7 +1,8 @@
-//! The fullscreen window: the selection view plus the Save / Cancel toolbar
-//! that appears next to the selection.
+//! The fullscreen window: the selection view plus the toolbar that appears
+//! next to the selection (annotation tools, colors, Save / Cancel).
 
-use crate::geometry::{self, Rect};
+use crate::annotate::{self, Tool};
+use crate::geometry::{self, PixelRect, Rect};
 use crate::output;
 use crate::selector::SelectionView;
 use gtk::{gdk, gio, glib, prelude::*};
@@ -19,24 +20,75 @@ const CSS: &str = "
 }
 .klip-toolbar button {
     min-height: 40px;
+}
+.klip-toolbar button.action {
     min-width: 104px;
     padding: 0 16px;
     font-size: 1.15em;
     font-weight: bold;
 }
+.klip-toolbar button.tool {
+    min-width: 40px;
+    padding: 0 4px;
+    font-size: 1.3em;
+}
+.klip-toolbar button.tool:checked {
+    background: #3584e4;
+    color: white;
+}
+.klip-toolbar button.swatch {
+    min-width: 24px;
+    min-height: 24px;
+    margin: 8px 0;
+    padding: 0;
+    border-radius: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.85);
+    box-shadow: none;
+}
+.klip-toolbar colorbutton button {
+    min-width: 40px;
+    padding: 0 6px;
+}
 ";
+
+/// Preset colors (red, yellow, green, blue); keys 1-4. The color button
+/// next to them picks any other color.
+const SWATCHES: [&str; 4] = ["#e01b24", "#f6d32d", "#2ec27e", "#3584e4"];
+
+/// Annotation tools: tool, label, tooltip, shortcut key.
+const TOOLS: [(Tool, &str, &str, char); 4] = [
+    (Tool::Select, "⬚", "Select a new region (S)", 's'),
+    (Tool::Arrow, "↗", "Arrow (A)", 'a'),
+    (Tool::Line, "╱", "Line (L)", 'l'),
+    (Tool::Ellipse, "◯", "Ellipse (E)", 'e'),
+];
+
+/// The toolbar's widgets.
+struct Toolbar {
+    root: gtk::Box,
+    tools: Vec<(Tool, gtk::ToggleButton)>,
+    swatches: Vec<(gdk::RGBA, gtk::Button)>,
+    color: gtk::ColorDialogButton,
+    save: gtk::Button,
+    cancel: gtk::Button,
+}
 
 struct Ui {
     app: gtk::Application,
     window: gtk::ApplicationWindow,
     overlay: gtk::Overlay,
-    toolbar: gtk::Box,
+    view: SelectionView,
+    toolbar: Toolbar,
     /// Current selection in widget coordinates; the toolbar sits next to it.
     selection: Cell<Option<Rect>>,
     /// The full screenshot.
     texture: gdk::Texture,
-    /// The cropped selection, once there is one.
+    /// The cropped selection (without annotations), once there is one.
     image: RefCell<Option<gdk::Texture>>,
+    /// Where `image` was cut from, in screenshot pixels.
+    crop: Cell<Option<PixelRect>>,
+    /// The annotation revision currently on the clipboard.
+    copied_revision: Cell<u64>,
     /// A file dialog is open.
     saving: Cell<bool>,
 }
@@ -53,17 +105,20 @@ pub fn show(app: &gtk::Application, texture: &gdk::Texture) {
     let toolbar = build_toolbar();
     let overlay = gtk::Overlay::new();
     overlay.set_child(Some(&view));
-    overlay.add_overlay(&toolbar);
+    overlay.add_overlay(&toolbar.root);
     window.set_child(Some(&overlay));
 
     let ui = Rc::new(Ui {
         app: app.clone(),
         window,
         overlay: overlay.clone(),
+        view: view.clone(),
         toolbar,
         selection: Cell::new(None),
         texture: texture.clone(),
         image: RefCell::default(),
+        crop: Cell::new(None),
+        copied_revision: Cell::new(0),
         saving: Cell::new(false),
     });
 
@@ -80,7 +135,7 @@ pub fn show(app: &gtk::Application, texture: &gdk::Texture) {
         ui,
         #[upgrade_or]
         None,
-        move |_, child| (child == ui.toolbar.upcast_ref::<gtk::Widget>())
+        move |_, child| (child == ui.toolbar.root.upcast_ref::<gtk::Widget>())
             .then(|| ui.toolbar_rect())
     ));
     ui.connect_buttons();
@@ -128,28 +183,81 @@ fn button(label: &str, icon: &str, tooltip: &str) -> gtk::Button {
     content.set_halign(gtk::Align::Center);
     content.append(&gtk::Image::from_icon_name(icon));
     content.append(&gtk::Label::new(Some(label)));
-    let button = gtk::Button::builder()
+    gtk::Button::builder()
         .child(&content)
         .tooltip_text(tooltip)
         // Keyboard shortcuts are handled by the window, so Enter must never
         // activate whichever button happens to have focus.
         .focusable(false)
-        .build();
-    button.set_widget_name(label);
-    button
+        .css_classes(["action"])
+        .build()
 }
 
-fn build_toolbar() -> gtk::Box {
-    let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    toolbar.add_css_class("klip-toolbar");
-    toolbar.set_visible(false);
+fn separator() -> gtk::Separator {
+    gtk::Separator::new(gtk::Orientation::Vertical)
+}
 
-    // Milestone 3: annotation tool buttons (arrow, line, ellipse, color) go
-    // in this box, left of Save / Cancel. Hidden while it is empty.
-    let tools = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    tools.set_widget_name("tools");
-    tools.set_visible(false);
-    toolbar.append(&tools);
+fn build_toolbar() -> Toolbar {
+    let root = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    root.add_css_class("klip-toolbar");
+    root.set_visible(false);
+
+    let mut group: Option<gtk::ToggleButton> = None;
+    let tools = TOOLS
+        .iter()
+        .map(|&(tool, label, tooltip, _)| {
+            let b = gtk::ToggleButton::builder()
+                .label(label)
+                .tooltip_text(tooltip)
+                .focusable(false)
+                .css_classes(["tool"])
+                .active(tool == Tool::Select)
+                .build();
+            b.set_group(group.as_ref());
+            group.get_or_insert_with(|| b.clone());
+            root.append(&b);
+            (tool, b)
+        })
+        .collect();
+    root.append(&separator());
+
+    let css = gtk::CssProvider::new();
+    let mut swatch_css = String::new();
+    let swatches = SWATCHES
+        .iter()
+        .enumerate()
+        .map(|(i, hex)| {
+            let class = format!("swatch-{i}");
+            swatch_css.push_str(&format!("button.{class} {{ background: {hex}; }}\n"));
+            let b = gtk::Button::builder()
+                .tooltip_text(format!("Color ({})", i + 1))
+                .focusable(false)
+                .valign(gtk::Align::Center)
+                .css_classes(["swatch", class.as_str()])
+                .build();
+            root.append(&b);
+            (gdk::RGBA::parse(*hex).expect("valid color"), b)
+        })
+        .collect::<Vec<_>>();
+    css.load_from_string(&swatch_css);
+    if let Some(display) = gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &css,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+    let color = gtk::ColorDialogButton::new(Some(
+        gtk::ColorDialog::builder()
+            .title("Annotation color")
+            .with_alpha(false)
+            .build(),
+    ));
+    color.set_tooltip_text(Some("Pick any color"));
+    color.set_focusable(false);
+    color.set_rgba(&swatches[0].0);
+    root.append(&color);
+    root.append(&separator());
 
     let save = button(
         "Save",
@@ -157,26 +265,89 @@ fn build_toolbar() -> gtk::Box {
         "Save as PNG (Enter, Ctrl+S)",
     );
     save.add_css_class("suggested-action");
-    toolbar.append(&save);
-    toolbar.append(&button("Cancel", "window-close-symbolic", "Close (Esc)"));
-    toolbar
+    root.append(&save);
+    let cancel = button("Cancel", "window-close-symbolic", "Close (Esc)");
+    root.append(&cancel);
+    Toolbar {
+        root,
+        tools,
+        swatches,
+        color,
+        save,
+        cancel,
+    }
 }
 
 impl Ui {
     fn connect_buttons(self: &Rc<Self>) {
-        let mut child = self.toolbar.first_child();
-        while let Some(widget) = child {
-            child = widget.next_sibling();
-            let Ok(button) = widget.downcast::<gtk::Button>() else {
-                continue;
-            };
-            let save = button.widget_name() == "Save";
-            button.connect_clicked(glib::clone!(
+        let tb = &self.toolbar;
+        tb.save.connect_clicked(glib::clone!(
+            #[weak(rename_to = ui)]
+            self,
+            move |_| ui.save()
+        ));
+        tb.cancel.connect_clicked(glib::clone!(
+            #[weak(rename_to = ui)]
+            self,
+            move |_| ui.close()
+        ));
+        for (tool, b) in &tb.tools {
+            let tool = *tool;
+            b.connect_toggled(glib::clone!(
                 #[weak(rename_to = ui)]
                 self,
-                move |_| if save { ui.save() } else { ui.close() }
+                move |b| if b.is_active() {
+                    ui.view.set_tool(tool)
+                }
             ));
         }
+        for (rgba, b) in &tb.swatches {
+            let rgba = *rgba;
+            b.connect_clicked(glib::clone!(
+                #[weak(rename_to = ui)]
+                self,
+                move |_| ui.pick_color(rgba)
+            ));
+        }
+        tb.color.connect_rgba_notify(glib::clone!(
+            #[weak(rename_to = ui)]
+            self,
+            move |c| ui.view.set_color(c.rgba())
+        ));
+        self.view.set_color(tb.color.rgba());
+    }
+
+    /// Choosing a color also switches from Select to the arrow tool, since
+    /// that's clearly what the user is about to do.
+    fn pick_color(&self, rgba: gdk::RGBA) {
+        self.toolbar.color.set_rgba(&rgba);
+        if self.toolbar.tools[0].1.is_active() {
+            self.toolbar.tools[1].1.set_active(true);
+        }
+    }
+
+    /// Shortcut keys for tools (S/A/L/E) and colors (1-4).
+    fn handle_tool_key(&self, key: gdk::Key) -> bool {
+        let Some(c) = key.to_unicode().map(|c| c.to_ascii_lowercase()) else {
+            return false;
+        };
+        if let Some((_, b)) = TOOLS
+            .iter()
+            .zip(&self.toolbar.tools)
+            .find_map(|(t, b)| (t.3 == c).then_some(b))
+        {
+            b.set_active(true);
+            return true;
+        }
+        if let Some(rgba) = c
+            .to_digit(10)
+            .and_then(|d| self.toolbar.swatches.get((d as usize).checked_sub(1)?))
+            .map(|(rgba, _)| *rgba)
+        {
+            self.pick_color(rgba);
+            return true;
+        }
+        false
     }
 
     fn connect_keys(self: &Rc<Self>) {
@@ -193,6 +364,8 @@ impl Ui {
                     gdk::Key::Escape => ui.close(),
                     gdk::Key::Return | gdk::Key::KP_Enter => ui.save(),
                     gdk::Key::s | gdk::Key::S if ctrl => ui.save(),
+                    gdk::Key::z | gdk::Key::Z if ctrl => ui.view.undo(),
+                    _ if !ctrl && ui.image.borrow().is_some() && ui.handle_tool_key(key) => {}
                     _ => return glib::Propagation::Proceed,
                 }
                 glib::Propagation::Stop
@@ -212,20 +385,23 @@ impl Ui {
         let image = output::crop(&self.texture, px);
         output::copy_to_clipboard(&self.window.clipboard(), &image);
         self.image.replace(Some(image));
+        self.crop.set(Some(px));
+        self.copied_revision.set(self.view.revision());
         self.place_toolbar(widget_rect);
     }
 
     fn place_toolbar(&self, sel: Rect) {
         self.selection.set(Some(sel));
-        self.toolbar.set_visible(true);
+        self.toolbar.root.set_visible(true);
         self.overlay.queue_allocate();
     }
 
     /// Where the toolbar goes, in overlay coordinates: next to the selection,
     /// or bottom-center if there is no selection or no usable size yet.
     fn toolbar_rect(&self) -> gdk::Rectangle {
-        let (_, tw, _, _) = self.toolbar.measure(gtk::Orientation::Horizontal, -1);
-        let (_, th, _, _) = self.toolbar.measure(gtk::Orientation::Vertical, tw);
+        let bar = &self.toolbar.root;
+        let (_, tw, _, _) = bar.measure(gtk::Orientation::Horizontal, -1);
+        let (_, th, _, _) = bar.measure(gtk::Orientation::Vertical, tw);
         let (w, h) = (self.overlay.width(), self.overlay.height());
         let (x, y) = match self.selection.get() {
             Some(sel) if w > 0 && h > 0 => geometry::toolbar_position(
@@ -254,12 +430,15 @@ impl Ui {
     /// Save the selection through a file dialog (the portal FileChooser on
     /// GNOME), then close.
     fn save(self: &Rc<Self>) {
-        let Some(image) = self.image.borrow().clone() else {
-            return;
-        };
-        if self.saving.replace(true) {
+        if self.saving.get() {
             return;
         }
+        // Update the clipboard now, while our window still has focus.
+        self.sync_clipboard();
+        let Some(image) = self.final_image() else {
+            return;
+        };
+        self.saving.set(true);
         let dialog = gtk::FileDialog::builder()
             .title("Save screenshot")
             .initial_name(default_file_name())
@@ -297,8 +476,40 @@ impl Ui {
             .show(Some(&self.window));
     }
 
+    /// The cropped image with the annotations baked in.
+    fn final_image(&self) -> Option<gdk::Texture> {
+        let image = self.image.borrow().clone()?;
+        let shapes = self.view.shapes();
+        let crop = self.crop.get()?;
+        if shapes.is_empty() {
+            return Some(image);
+        }
+        let ((ox, oy), scale) = self.view.image_transform();
+        let offset = (ox - crop.x as f64, oy - crop.y as f64);
+        match annotate::bake(&image, &shapes, offset, scale) {
+            Ok(baked) => Some(baked),
+            Err(err) => {
+                eprintln!("klip: could not draw annotations: {err}");
+                Some(image)
+            }
+        }
+    }
+
+    /// Re-copy if the annotations changed since the last copy.
+    fn sync_clipboard(&self) {
+        let revision = self.view.revision();
+        if revision == self.copied_revision.get() {
+            return;
+        }
+        if let Some(image) = self.final_image() {
+            crate::debug!("re-copying with {} annotations", self.view.shapes().len());
+            output::copy_to_clipboard(&self.window.clipboard(), &image);
+            self.copied_revision.set(revision);
+        }
+    }
+
     /// Cancel / Esc / after saving. Without a selection klip just exits. With
-    /// one, the copy stays on the clipboard: hide the window and keep serving
+    /// one, the (annotated) copy stays on the clipboard: hide the window and keep serving
     /// it until another app takes over.
     fn close(&self) {
         if self.saving.get() {
@@ -308,6 +519,7 @@ impl Ui {
             self.app.quit();
             return;
         }
+        self.sync_clipboard();
         self.window.set_visible(false);
         output::keep_clipboard_alive(&self.app, &self.window.clipboard());
     }

@@ -3,6 +3,7 @@
 //! Flow: portal screenshot -> fullscreen selection window -> crop ->
 //! clipboard, with an optional Save to a PNG file.
 
+mod annotate;
 mod capture;
 mod geometry;
 mod output;

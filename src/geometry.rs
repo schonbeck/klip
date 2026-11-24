@@ -20,6 +20,10 @@ impl Rect {
         Self::new(x0.min(x1), y0.min(y1), (x1 - x0).abs(), (y1 - y0).abs())
     }
 
+    pub fn contains(&self, x: f64, y: f64) -> bool {
+        x >= self.x && y >= self.y && x <= self.x + self.w && y <= self.y + self.h
+    }
+
     /// Intersection with `other` (empty rectangle if they don't overlap).
     pub fn clamp_to(self, other: Rect) -> Self {
         let x0 = self.x.max(other.x);

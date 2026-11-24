@@ -3,8 +3,8 @@
 A tiny, native Wayland region screenshot tool for Linux. Press a hotkey, drag a
 rectangle, annotate if you like, and the PNG is on your clipboard.
 
-Status: milestone 2 (capture, select, copy to clipboard, Save / Cancel). No
-packages yet; build from source.
+Status: milestone 3 (capture, select, copy to clipboard, Save / Cancel,
+annotations). No packages yet; build from source.
 
 ## What it does
 
@@ -77,8 +77,15 @@ next to the selection:
 - **Save** (or Enter, Ctrl+S): pick a file name (default
   `~/Pictures/klip-YYYY-MM-DD_HH-MM-SS.png`) and write the PNG. The window
   then closes; the clipboard copy stays.
-- **Cancel** (or Esc): close the window. The clipboard copy stays (see below).
-- Drag again to replace the selection (it's copied again).
+- **Cancel** (or Esc): close the window. The clipboard copy (with any annotations) stays (see below).
+- **Annotate**: pick Arrow (A), Line (L) or Ellipse (E) in the toolbar and
+  drag inside the selection. Colors: the four swatches (keys 1-4; picking one
+  also switches from Select to Arrow) or the color button for any color.
+  Ctrl+Z undoes the last shape. Annotations are baked into the PNG: the
+  clipboard is updated with the annotated image when you Save or close, and
+  the saved file includes them.
+- With the Select tool (S, the default), drag again to replace the selection
+  (it's copied again; annotations are cleared).
 - Esc before selecting anything exits without touching the clipboard.
 
 - `klip` keeps running in the background after the window closes, because on Wayland the
@@ -113,7 +120,8 @@ next to the selection:
   (usually the one with the focused window). klip works out that monitor's
   part of the portal's all-monitors screenshot from the monitor layout; with
   monitors at *different* scale factors that mapping may be slightly off.
-- No annotations yet (milestone 3).
+- Annotations can't be moved or edited after drawing (only undone), and the
+  stroke width is fixed.
 - Cancel after a selection does not undo the clipboard copy (it was made the
   moment you let go). Restoring the previous clipboard isn't possible in
   general on Wayland, and "copy, then just close" is the common case.
@@ -128,9 +136,11 @@ headless GNOME Shell.
 ## Code layout
 
 - `src/main.rs`: startup and argument parsing.
-- `src/ui.rs`: the fullscreen window, the Save / Cancel toolbar (with an empty
-  `tools` box where the milestone 3 annotation buttons go), keyboard
-  shortcuts and the file dialog.
+- `src/ui.rs`: the fullscreen window, the toolbar (tools, colors, Save /
+  Cancel), keyboard shortcuts, the file dialog and re-copying after
+  annotating.
+- `src/annotate.rs`: annotation shapes, drawing them (cairo), baking them
+  into the PNG.
 - `src/capture.rs`: portal screenshot via ashpd (or `--file`).
 - `src/selector.rs`: the fullscreen selection widget (drawing and dragging).
 - `src/geometry.rs`: rectangle math, HiDPI and monitor mapping (unit tested).
