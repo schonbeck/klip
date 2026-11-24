@@ -267,7 +267,7 @@ impl App {
         }
     }
 
-    /// The shortcut as the user sees it, e.g. "Shift+Ctrl+P".
+    /// The shortcut as the user sees it, e.g. "Ctrl+Alt+P".
     pub fn shortcut_label(&self) -> String {
         shortcut::label(&self.config.borrow().shortcut)
     }

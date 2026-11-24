@@ -88,15 +88,15 @@ pub fn accel_from_description(description: &str) -> Option<String> {
     portal_trigger(accel).map(|_| accel.to_string())
 }
 
-/// Human-readable form of a GTK accelerator, e.g. "Shift+Ctrl+P".
+/// Human-readable form of a GTK accelerator, e.g. "Ctrl+Alt+P".
 pub fn label(accel: &str) -> String {
     gtk::accelerator_parse(accel)
         .map(|(key, mods)| gtk::accelerator_get_label(key, mods).to_string())
         .unwrap_or_else(|| accel.to_string())
 }
 
-/// GTK accelerator (`<Control><Shift>p`) to the portal's trigger format
-/// (`CTRL+SHIFT+p`, the XDG shortcuts spec).
+/// GTK accelerator (`<Control><Alt>p`) to the portal's trigger format
+/// (`CTRL+ALT+p`, the XDG shortcuts spec).
 pub fn portal_trigger(accel: &str) -> Option<String> {
     let mut rest = accel.trim();
     let mut mods = [false; 4]; // CTRL, ALT, SHIFT, LOGO
@@ -267,7 +267,7 @@ mod tests {
     fn portal_trigger_format() {
         assert_eq!(
             super::portal_trigger(crate::config::DEFAULT_SHORTCUT).as_deref(),
-            Some("CTRL+SHIFT+p")
+            Some("CTRL+ALT+p")
         );
         assert_eq!(
             super::portal_trigger("<Super><Shift>s").as_deref(),

@@ -18,7 +18,7 @@ yet; build from source.
   folder can be changed in the settings) and closes.
 - Annotate with arrows, lines and circles/ellipses, in a color you pick.
 - No setup questions: klip starts with sensible defaults (save to
-  `~/Pictures/Screenshots`, start at login, Ctrl+Shift+P), all changeable in
+  `~/Pictures/Screenshots`, start at login, Ctrl+Alt+P), all changeable in
   the settings.
 - Runs in the background (started at login) with a configurable global
   keyboard shortcut and a tray icon.
@@ -97,7 +97,7 @@ cargo build --release
 
 There are no setup questions. The first launch saves the default settings
 (`~/.config/klip/config.ini`), turns on start at login, and this klip stays
-in the background right away (shortcut Ctrl+Shift+P, tray icon). Then it
+in the background right away (shortcut Ctrl+Alt+P, tray icon). Then it
 takes the screenshot. If you turn off start at login in the settings, it
 stays off, and `klip` runs one-shot.
 
@@ -162,10 +162,10 @@ klip --settings    # open the settings
 ### Coming from an earlier build of this branch
 
 An earlier build asked "Start klip automatically at login?" and saved the
-answer, and the default shortcut was Super+Shift+S (now Ctrl+Shift+P).
-Settings are saved with their values, so an existing `config.ini` keeps
-Super+Shift+S until you change it in the settings. To start over with the
-defaults:
+answer, and earlier builds used Super+Shift+S as the default shortcut (now
+Ctrl+Alt+P). Settings are saved with their values, so an existing
+`config.ini` keeps its shortcut until you change it in the settings. To start
+over with the defaults:
 
 ```sh
 pkill -x klip
