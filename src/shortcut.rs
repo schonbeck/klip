@@ -1,9 +1,11 @@
 //! The global "take a screenshot" shortcut. Two ways:
 //!
-//! 1. The xdg-desktop-portal GlobalShortcuts portal: works while the daemon
-//!    runs; the desktop may ask the user to confirm the shortcut once.
-//! 2. Fallback on GNOME: a custom keybinding (gsettings, media-keys) that runs
-//!    `klip`, which hands over to the daemon if one runs.
+//! - On GNOME (default): a custom keybinding (gsettings, media-keys) that
+//!   runs `klip`, which hands over to the background klip if one runs. No
+//!   dialog, and it works even when klip isn't running.
+//! - Elsewhere: the xdg-desktop-portal GlobalShortcuts portal, which works
+//!   while klip runs in the background (the desktop may ask once to confirm).
+//!   If the portal fails, the GNOME keybinding is tried as a fallback.
 
 use crate::desktop;
 use ashpd::desktop::Session;
@@ -184,6 +186,13 @@ pub async fn register_portal(
         trigger: description,
         tasks: vec![activated_task, changed_task],
     })
+}
+
+/// Running on GNOME with its media-keys settings available.
+pub fn is_gnome() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP")
+        .is_ok_and(|d| d.split(':').any(|d| d.eq_ignore_ascii_case("GNOME")))
+        && gnome_schemas_present()
 }
 
 fn gnome_schemas_present() -> bool {

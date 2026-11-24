@@ -3,7 +3,7 @@
 
 use crate::config::Config;
 use crate::shortcut::{self, Backend, PortalShortcut};
-use crate::{APP_ID, capture, desktop, settings, tray, ui};
+use crate::{APP_ID, capture, desktop, permission, settings, tray, ui};
 use futures_util::FutureExt;
 use futures_util::future::{LocalBoxFuture, Shared};
 use gtk::{gio, glib, prelude::*};
@@ -86,10 +86,19 @@ impl App {
             .get_or_insert_with(|| {
                 async {
                     let id = ashpd::AppID::try_from(APP_ID).expect("valid app id");
-                    match ashpd::register_host_app(id).await {
-                        Ok(()) => crate::debug!("registered with the portal as {APP_ID}"),
-                        Err(err) => crate::debug!("portal host registration failed: {err}"),
-                    }
+                    // The app id the portal knows us by: ours once registered,
+                    // otherwise "" (all unsandboxed apps).
+                    let portal_id = match ashpd::register_host_app(id).await {
+                        Ok(()) => {
+                            crate::debug!("registered with the portal as {APP_ID}");
+                            APP_ID
+                        }
+                        Err(err) => {
+                            crate::debug!("portal host registration failed: {err}");
+                            ""
+                        }
+                    };
+                    permission::grant_screenshot(portal_id).await;
                 }
                 .boxed_local()
                 .shared()
@@ -99,45 +108,45 @@ impl App {
     }
 
     pub fn run(self: &Rc<Self>, action: Action) {
-        let first_run = !crate::config::path().exists();
         // Keep the app alive while we work asynchronously.
         let hold = self.app.hold();
         let this = self.clone();
         glib::spawn_future_local(async move {
-            if first_run && !matches!(action, Action::Settings) {
-                this.ask_autostart().await;
-            }
+            this.first_run_defaults();
             match action {
                 Action::Daemon if this.is_daemon() => {
                     println!("klip is already running in the background");
                 }
                 Action::Daemon => this.become_daemon().await,
                 Action::Settings => settings::open(&this, None),
-                Action::Capture(file) => this.capture(file).await,
+                Action::Capture(file) => {
+                    // With "start at login" on, klip is meant to be running in
+                    // the background: if it isn't yet (e.g. right after
+                    // installing), this klip becomes the background one.
+                    if this.config.borrow().autostart && !this.is_daemon() {
+                        this.become_daemon().await;
+                    }
+                    this.capture(file).await
+                }
             }
             drop(hold);
         });
     }
 
-    /// First run: ask whether to start at login, and remember the answer.
-    async fn ask_autostart(self: &Rc<Self>) {
-        let shortcut = shortcut::label(&self.config.borrow().shortcut);
-        let dialog = gtk::AlertDialog::builder()
-            .message("Start klip automatically at login?")
-            .detail(format!(
-                "klip then waits in the background, so {shortcut} takes a screenshot \
-                 at any time. You can change this later in klip's settings."
-            ))
-            .buttons(["Not Now", "Start at Login"])
-            .cancel_button(0)
-            .default_button(1)
-            .modal(true)
-            .build();
-        let yes = dialog.choose_future(None::<&gtk::Window>).await == Ok(1);
-        crate::debug!("first run: start at login = {yes}");
-        self.config.borrow_mut().autostart = yes;
+    /// First launch (no config file yet): save the defaults and turn on
+    /// start at login, without asking. Later launches leave the user's
+    /// choices alone.
+    fn first_run_defaults(&self) {
+        if crate::config::path().exists() {
+            return;
+        }
+        crate::debug!("first launch: saving default settings");
         self.save_config();
-        self.set_autostart(yes).await;
+        if self.config.borrow().autostart
+            && let Err(err) = desktop::set_autostart(true)
+        {
+            eprintln!("klip: could not enable start at login: {err}");
+        }
     }
 
     /// Apply the "start at login" setting; turning it on also keeps this
@@ -189,7 +198,7 @@ impl App {
         let forced = std::env::var("KLIP_SHORTCUT_BACKEND").unwrap_or_default();
         if !self.is_daemon() {
             // Only the GNOME keybinding works without a running daemon.
-            if shortcut::gnome_binding_exists() {
+            if shortcut::gnome_binding_exists() || shortcut::is_gnome() {
                 self.set_gnome(Some(&accel));
             }
             return;
@@ -198,7 +207,11 @@ impl App {
         if let Some(old) = old {
             old.close().await;
         }
-        if forced != "gnome" {
+        // On GNOME the custom keybinding needs no confirmation dialog (the
+        // portal shows "Add Keyboard Shortcuts" and then keeps its own copy
+        // of the key), so it's the default there; the portal elsewhere.
+        let prefer_gnome = forced.is_empty() && shortcut::is_gnome();
+        if forced != "gnome" && !prefer_gnome {
             self.portal_ready().await;
             let this = Rc::downgrade(self);
             let on_activate = move || {

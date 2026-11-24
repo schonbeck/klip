@@ -25,9 +25,10 @@ pub fn refresh(app: &App) {
 }
 
 fn folder_label(dir: Option<&Path>) -> String {
-    dir.map_or("Not set yet (asked on the first Save)".into(), |d| {
-        d.display().to_string()
-    })
+    dir.map_or_else(
+        || crate::config::default_save_dir().display().to_string(),
+        |d| d.display().to_string(),
+    )
 }
 
 fn row(grid: &gtk::Grid, y: i32, title: &str, widget: &impl IsA<gtk::Widget>) {

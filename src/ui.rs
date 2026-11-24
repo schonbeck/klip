@@ -496,44 +496,39 @@ impl Ui {
         self.close(true);
     }
 
-    /// Save to the configured folder (asked once, on the first Save), then
-    /// close.
-    fn save(self: &Rc<Self>) {
+    /// Save to the configured folder (default `~/Pictures/Screenshots`,
+    /// created if needed), then close.
+    fn save(&self) {
         if self.busy.get() {
             return;
         }
         let Some(image) = self.final_image() else {
             return;
         };
-        let ui = self.clone();
-        glib::spawn_future_local(async move {
-            ui.busy.set(true);
-            let configured = ui.app.config.borrow().save_dir.clone();
-            let dir = match configured {
-                Some(dir) => Some(dir),
-                None => settings::choose_folder(&ui.app, Some(ui.window.upcast_ref())).await,
-            };
-            ui.busy.set(false);
-            // No folder chosen: back to the selection.
-            let Some(dir) = dir else { return };
-            let result = std::fs::create_dir_all(&dir)
-                .map_err(|e| e.to_string())
-                .and_then(|()| {
-                    let path = unique_path(&dir, &default_file_name());
-                    output::save_png(&gtk::gio::File::for_path(&path), &image)
-                        .map(|()| path)
-                        .map_err(|e| e.to_string())
-                });
-            match result {
-                Ok(path) => {
-                    crate::debug!("saved {}", path.display());
-                    println!("{}", path.display());
-                    ui.app.notify_saved(&path);
-                    ui.close(false);
-                }
-                Err(err) => ui.show_error("Could not save the screenshot", &err),
+        let dir = self
+            .app
+            .config
+            .borrow()
+            .save_dir
+            .clone()
+            .unwrap_or_else(crate::config::default_save_dir);
+        let result = std::fs::create_dir_all(&dir)
+            .map_err(|e| e.to_string())
+            .and_then(|()| {
+                let path = unique_path(&dir, &default_file_name());
+                output::save_png(&gtk::gio::File::for_path(&path), &image)
+                    .map(|()| path)
+                    .map_err(|e| e.to_string())
+            });
+        match result {
+            Ok(path) => {
+                crate::debug!("saved {}", path.display());
+                println!("{}", path.display());
+                self.app.notify_saved(&path);
+                self.close(false);
             }
-        });
+            Err(err) => self.show_error("Could not save the screenshot", &err),
+        }
     }
 
     fn show_error(&self, message: &str, err: &str) {

@@ -8,7 +8,7 @@ const GROUP: &str = "klip";
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    /// Where Save writes screenshots. `None` until the first Save asks.
+    /// Where Save writes screenshots.
     pub save_dir: Option<PathBuf>,
     /// Start `klip --daemon` at login (XDG autostart).
     pub autostart: bool,
@@ -19,11 +19,18 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            save_dir: None,
-            autostart: false,
+            save_dir: Some(default_save_dir()),
+            autostart: true,
             shortcut: DEFAULT_SHORTCUT.into(),
         }
     }
+}
+
+/// `~/Pictures/Screenshots` (the XDG pictures folder), like GNOME's own tool.
+pub fn default_save_dir() -> PathBuf {
+    glib::user_special_dir(glib::UserDirectory::Pictures)
+        .unwrap_or_else(|| glib::home_dir().join("Pictures"))
+        .join("Screenshots")
 }
 
 pub fn path() -> PathBuf {
@@ -37,10 +44,12 @@ impl Config {
         kf.load_from_file(path(), glib::KeyFileFlags::NONE).ok()?;
         let string = |key| kf.string(GROUP, key).ok().map(|s| s.to_string());
         Some(Self {
-            save_dir: string("save_dir")
-                .filter(|s| !s.is_empty())
-                .map(PathBuf::from),
-            autostart: kf.boolean(GROUP, "autostart").unwrap_or(false),
+            save_dir: Some(
+                string("save_dir")
+                    .filter(|s| !s.is_empty())
+                    .map_or_else(default_save_dir, PathBuf::from),
+            ),
+            autostart: kf.boolean(GROUP, "autostart").unwrap_or(true),
             shortcut: string("shortcut")
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| DEFAULT_SHORTCUT.into()),

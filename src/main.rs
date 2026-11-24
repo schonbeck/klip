@@ -13,6 +13,7 @@ mod config;
 mod desktop;
 mod geometry;
 mod output;
+mod permission;
 mod selector;
 mod settings;
 mod shortcut;
