@@ -45,3 +45,19 @@ If the dialog was already shown and nobody answered, it stays on screen;
 restarting gnome-shell clears it. The session starts in the Overview; leave it
 with `gdbus call --session -d org.gnome.Shell -o /org/gnome/Shell -m
 org.freedesktop.DBus.Properties.Set org.gnome.Shell OverviewActive "<false>"`.
+
+## Milestone 4 notes
+
+- `e2e.py` steps added: `["klip", sel, log, [args...]]` (e.g. `["--daemon"]`),
+  `["combo", ["super","shift","s"]]`, `["click", x, y]`, `["sh", "cmd"]`.
+  `E2E_KEEP=1` leaves started klip processes running (for a daemon).
+- The headless session doesn't start `gsd-media-keys`; GNOME custom
+  keybindings only fire with it running:
+  `setsid nohup /usr/libexec/gsd-media-keys >/tmp/gsd.log 2>&1 &`.
+  The GlobalShortcuts portal also goes through Shell's GrabAccelerators.
+- Tray icon: `gnome-extensions enable ubuntu-appindicators@ubuntu.com`
+  (installed, but off in this container) provides the StatusNotifierWatcher.
+- klip registers with the portal as `io.github.schonbeck.klip`, so the
+  screenshot permission is asked again for that app id. GNOME Shell 50 can't
+  show that dialog without a focused app (`focus_app is null` in the journal);
+  klip's "Try Again" window handles that.

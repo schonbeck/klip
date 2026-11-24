@@ -6,9 +6,22 @@ use gtk::{gdk, gio, glib, prelude::*};
 use std::path::Path;
 use std::rc::Rc;
 
+type RefreshFn = Box<dyn Fn(&App)>;
+
 thread_local! {
     /// The open settings window, so a second request just raises it.
     static WINDOW: std::cell::RefCell<Option<gtk::Window>> = const { std::cell::RefCell::new(None) };
+    /// Updates the open window's shortcut row.
+    static REFRESH: std::cell::RefCell<Option<RefreshFn>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The shortcut changed elsewhere (e.g. in the desktop's settings).
+pub fn refresh(app: &App) {
+    REFRESH.with(|r| {
+        if let Some(f) = r.borrow().as_ref() {
+            f(app)
+        }
+    });
 }
 
 fn folder_label(dir: Option<&Path>) -> String {
@@ -94,7 +107,7 @@ pub fn open(app: &Rc<App>, parent: Option<&gtk::Window>) {
     ));
 
     // Shortcut: click, then press the new combination.
-    let accel_button = gtk::Button::with_label(&shortcut::label(&app.config.borrow().shortcut));
+    let accel_button = gtk::Button::with_label(&app.shortcut_label());
     accel_button.set_halign(gtk::Align::Start);
     row(&grid, 2, "Screenshot shortcut", &accel_button);
     let status = gtk::Label::builder()
@@ -107,11 +120,37 @@ pub fn open(app: &Rc<App>, parent: Option<&gtk::Window>) {
     accel_button.connect_clicked(glib::clone!(
         #[strong]
         capturing,
+        #[weak]
+        app,
+        #[weak]
+        status,
         move |b| {
+            if app.desktop_owns_shortcut() {
+                // The desktop owns the key; it has its own dialog for it.
+                status.set_label("Change the shortcut in the desktop's dialog");
+                glib::spawn_future_local(async move {
+                    if let Err(err) = app.configure_shortcut().await {
+                        status.set_label(&format!("Could not open the desktop's dialog: {err}"));
+                    }
+                });
+                return;
+            }
             capturing.set(true);
             b.set_label("Press the new shortcut… (Esc to cancel)");
         }
     ));
+    REFRESH.with(|r| {
+        r.replace(Some(Box::new(glib::clone!(
+            #[weak]
+            accel_button,
+            #[weak]
+            status,
+            move |app: &App| {
+                accel_button.set_label(&app.shortcut_label());
+                status.set_label(app.shortcut_backend.get().describe());
+            }
+        ))))
+    });
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     keys.connect_key_pressed(glib::clone!(
@@ -119,8 +158,6 @@ pub fn open(app: &Rc<App>, parent: Option<&gtk::Window>) {
         app,
         #[weak]
         accel_button,
-        #[weak]
-        status,
         #[upgrade_or]
         glib::Propagation::Proceed,
         move |_, key, _, mods| {
@@ -150,7 +187,7 @@ pub fn open(app: &Rc<App>, parent: Option<&gtk::Window>) {
             app.save_config();
             glib::spawn_future_local(async move {
                 app.apply_shortcut().await;
-                status.set_label(app.shortcut_backend.get().describe());
+                refresh(&app);
             });
             glib::Propagation::Stop
         }
@@ -169,6 +206,7 @@ pub fn open(app: &Rc<App>, parent: Option<&gtk::Window>) {
     window.set_child(Some(&grid));
     window.connect_close_request(|_| {
         WINDOW.with(|w| w.borrow_mut().take());
+        REFRESH.with(|r| r.borrow_mut().take());
         glib::Propagation::Proceed
     });
     WINDOW.with(|w| w.replace(Some(window.clone())));

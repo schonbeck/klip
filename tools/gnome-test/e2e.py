@@ -70,9 +70,16 @@ def clip_read(name):
             if chunk: data += chunk
         open(f"{OUT}/{name}.png", "wb").write(data); print("mutter SelectionRead image/png:", len(data), "bytes, PNG" if data[:4] == b"\x89PNG" else "NOT PNG")
     except Exception as e: print("SelectionRead failed:", e)
-def klip(sel, log):
+def klip(sel, log, args=()):
     env = dict(os.environ, KLIP_DEBUG="1", KLIP_TEST_SELECT=sel)
-    return subprocess.Popen([os.path.expanduser("~/klip/target/release/klip")], env=env, stdout=open(log, "w"), stderr=subprocess.STDOUT)
+    return subprocess.Popen([os.path.expanduser("~/klip/target/release/klip"), *args], env=env, stdout=open(log, "w"), stderr=subprocess.STDOUT)
+KEYSYMS = {"esc": 0xff1b, "ret": 0xff0d, "shift": 0xffe1, "ctrl": 0xffe3, "super": 0xffeb, "alt": 0xffe9, "tab": 0xff09, "space": 0x20, "down": 0xff54, "up": 0xff52}
+def combo(names):
+    syms = [KEYSYMS.get(n) or ord(n) for n in names]
+    for s in syms:
+        call(RD, sess, SI, "NotifyKeyboardKeysym", GLib.Variant("(ub)", (s, True))); pump(0.05)
+    for s in reversed(syms):
+        call(RD, sess, SI, "NotifyKeyboardKeysym", GLib.Variant("(ub)", (s, False))); pump(0.05)
 ESC, RET = 0xff1b, 0xff0d
 pump(1)
 import json
@@ -80,7 +87,10 @@ seq = json.loads(sys.argv[1])
 procs = []
 for a in seq:
     c = a[0]
-    if c == "klip": procs.append(klip(a[1], a[2])); print("started klip", a[1])
+    if c == "klip": procs.append(klip(a[1], a[2], a[3] if len(a) > 3 else ())); print("started klip", a[1:])
+    elif c == "combo": combo(a[1]); print("combo", "+".join(a[1]))
+    elif c == "click": drag(a[1], a[2], a[1], a[2], steps=1); print("click", a[1:3])
+    elif c == "sh": print("sh:", subprocess.run(a[1], shell=True, capture_output=True, text=True).stdout.strip())
     elif c == "wait": pump(a[1])
     elif c == "key":
         k = a[1]
@@ -96,6 +106,7 @@ for a in seq:
     elif c == "status": print("klip procs:", [p.poll() for p in procs], "saved:", glob.glob(os.path.expanduser("~/**/klip-*.png"), recursive=True))
     elif c == "copytext":
         call(RD, sess, SI, "SetSelection", GLib.Variant("(a{sv})", ({"mime-types": GLib.Variant("as", ["text/plain;charset=utf-8"])},))); print("RD took clipboard ownership")
-for p in procs:
-    if p.poll() is None: p.terminate()
+if not os.environ.get("E2E_KEEP"):
+    for p in procs:
+        if p.poll() is None: p.terminate()
 call(RD, sess, SI, "Stop")

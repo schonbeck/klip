@@ -206,8 +206,34 @@ impl App {
                     this.run(Action::Capture(None));
                 }
             };
-            match shortcut::register_portal(&accel, on_activate).await {
+            let this = Rc::downgrade(self);
+            let on_changed = move |description: String| {
+                let Some(this) = this.upgrade() else { return };
+                // Keep the config in step with what the desktop bound.
+                if let Some(accel) = shortcut::accel_from_description(&description) {
+                    this.config.borrow_mut().shortcut = accel;
+                    this.save_config();
+                }
+                settings::refresh(&this);
+            };
+            match shortcut::register_portal(&accel, on_activate, on_changed).await {
                 Ok(handle) => {
+                    // Once the user accepted a key, GNOME keeps it and treats
+                    // klip's key as a mere suggestion. If it differs from the
+                    // configured one, use the GNOME keybinding instead, so the
+                    // key set in klip's settings is the one that works.
+                    let bound = shortcut::accel_from_description(&handle.trigger_description());
+                    if let Some(bound) = bound
+                        && !shortcut::same_accel(&bound, &accel)
+                        && forced != "portal"
+                    {
+                        crate::debug!(
+                            "the desktop keeps {bound}, not {accel}: using GNOME's keybinding"
+                        );
+                        handle.close().await;
+                        self.set_gnome(Some(&accel));
+                        return;
+                    }
                     self.portal_shortcut.replace(Some(handle));
                     self.shortcut_backend.set(Backend::Portal);
                     // Don't trigger twice.
@@ -222,6 +248,34 @@ impl App {
         if forced != "portal" {
             self.set_gnome(Some(&accel));
         }
+    }
+
+    /// The shortcut as the user sees it, e.g. "Shift+Super+S".
+    pub fn shortcut_label(&self) -> String {
+        shortcut::label(&self.config.borrow().shortcut)
+    }
+
+    /// With the portal, the desktop owns the key and has its own dialog to
+    /// change it. True if that's the case (then use `configure_shortcut`).
+    pub fn desktop_owns_shortcut(&self) -> bool {
+        self.portal_shortcut
+            .borrow()
+            .as_ref()
+            .is_some_and(|p| p.can_configure())
+    }
+
+    /// Open the desktop's dialog for changing the shortcut.
+    pub async fn configure_shortcut(&self) -> Result<(), String> {
+        // Don't hold the RefCell borrow across the await.
+        let portal = self.portal_shortcut.take();
+        let result = match &portal {
+            Some(p) => p.configure().await,
+            None => Err("no portal shortcut".into()),
+        };
+        if self.portal_shortcut.borrow().is_none() {
+            self.portal_shortcut.replace(portal);
+        }
+        result
     }
 
     fn set_gnome(&self, accel: Option<&str>) {
@@ -248,6 +302,7 @@ impl App {
             return;
         }
         self.capture.replace(Some(self.app.hold()));
+        let from_portal = file.is_none();
         let texture = match file {
             Some(path) => capture::from_file(&path),
             None => {
@@ -259,9 +314,101 @@ impl App {
             Ok(texture) => ui::show(self, &texture),
             Err(err) => {
                 eprintln!("klip: could not take screenshot: {err}");
+                // With a hold but no window, a one-shot klip stays alive for the dialog.
+                if from_portal && self.screenshot_failed(&err.to_string()).await {
+                    self.capture.take();
+                    Box::pin(self.capture(None)).await;
+                    return;
+                }
                 self.capture.take();
             }
         }
+    }
+
+    /// Tell the user the screenshot failed and offer to try again; returns
+    /// true once a retry worked (permission granted), so the caller takes the
+    /// real screenshot.
+    ///
+    /// The first time, GNOME asks "Allow screenshots?", but GNOME Shell can't
+    /// show that dialog while no app has focus (e.g. shortcut pressed on the
+    /// empty desktop). So the retry runs while this window is still open and
+    /// focused; its screenshot is thrown away.
+    async fn screenshot_failed(&self, err: &str) -> bool {
+        let (tx, rx) = futures_channel::oneshot::channel::<bool>();
+        let tx = Rc::new(RefCell::new(Some(tx)));
+        let window = gtk::Window::builder()
+            .application(&self.app)
+            .title("klip")
+            .resizable(false)
+            .build();
+        let label = gtk::Label::builder()
+            .label(format!(
+                "Could not take a screenshot:\n{err}\n\n\
+                 If the desktop has not asked yet whether klip may take \
+                 screenshots, click Try Again."
+            ))
+            .wrap(true)
+            .max_width_chars(50)
+            .build();
+        let retry = gtk::Button::with_label("Try Again");
+        retry.add_css_class("suggested-action");
+        let close = gtk::Button::with_label("Close");
+        let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        buttons.set_halign(gtk::Align::End);
+        buttons.append(&close);
+        buttons.append(&retry);
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 16);
+        for m in ["top", "bottom", "start", "end"] {
+            content.set_property(&format!("margin-{m}"), 20);
+        }
+        content.append(&label);
+        content.append(&buttons);
+        window.set_child(Some(&content));
+        let finish = {
+            let tx = tx.clone();
+            move |ok: bool| {
+                if let Some(tx) = tx.borrow_mut().take() {
+                    tx.send(ok).ok();
+                }
+            }
+        };
+        window.connect_close_request({
+            let finish = finish.clone();
+            move |_| {
+                finish(false);
+                glib::Propagation::Proceed
+            }
+        });
+        close.connect_clicked(glib::clone!(
+            #[weak]
+            window,
+            move |_| window.close()
+        ));
+        retry.connect_clicked(glib::clone!(
+            #[weak]
+            label,
+            move |b| {
+                b.set_sensitive(false);
+                let (b, label, finish) = (b.clone(), label.clone(), finish.clone());
+                glib::spawn_future_local(async move {
+                    match capture::from_portal().await {
+                        Ok(_) => finish(true),
+                        Err(err) => {
+                            label.set_label(&format!("Still failing:\n{err}"));
+                            b.set_sensitive(true);
+                        }
+                    }
+                });
+            }
+        ));
+        window.present();
+        let ok = rx.await.unwrap_or(false);
+        window.destroy();
+        if ok {
+            // Let the window disappear before the real screenshot.
+            glib::timeout_future(Duration::from_millis(400)).await;
+        }
+        ok
     }
 
     /// The capture window closed. `copied`: we now own the clipboard.

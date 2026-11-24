@@ -10,6 +10,8 @@ use ashpd::desktop::Session;
 use ashpd::desktop::global_shortcuts::{GlobalShortcuts, NewShortcut};
 use futures_util::StreamExt;
 use gtk::{gio, glib, prelude::*};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 const MEDIA_KEYS: &str = "org.gnome.settings-daemon.plugins.media-keys";
 const CUSTOM: &str = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding";
@@ -26,24 +28,62 @@ pub enum Backend {
 impl Backend {
     pub fn describe(self) -> &'static str {
         match self {
-            Backend::Portal => "active (desktop portal, while klip runs in the background)",
+            Backend::Portal => "set in the desktop's keyboard settings; click to change it",
             Backend::Gnome => "active (GNOME keyboard shortcut)",
             Backend::None => "not registered (start klip in the background to use it)",
         }
     }
 }
 
-/// A registered portal shortcut; dropping or closing it unregisters.
+/// A registered portal shortcut; closing it unregisters.
 pub struct PortalShortcut {
+    portal: Rc<GlobalShortcuts>,
     session: Session<GlobalShortcuts>,
-    task: glib::JoinHandle<()>,
+    /// What the desktop actually bound, e.g. "Press <Shift><Super>s".
+    trigger: Rc<RefCell<String>>,
+    tasks: Vec<glib::JoinHandle<()>>,
 }
 
 impl PortalShortcut {
     pub async fn close(self) {
-        self.task.abort();
+        for task in &self.tasks {
+            task.abort();
+        }
         self.session.close().await.ok();
     }
+
+    /// The desktop's description of the bound key.
+    pub fn trigger_description(&self) -> String {
+        self.trigger.borrow().clone()
+    }
+
+    /// Whether the desktop offers its own dialog to change the key
+    /// (GlobalShortcuts portal version 2). Once bound, desktops like GNOME
+    /// own the key: klip's preferred key is only a suggestion.
+    pub fn can_configure(&self) -> bool {
+        self.portal.version() >= 2
+    }
+
+    /// Open the desktop's dialog to change the shortcut.
+    pub async fn configure(&self) -> Result<(), String> {
+        self.portal
+            .configure_shortcuts(&self.session, None, Default::default())
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// Whether two GTK accelerators mean the same key combination.
+pub fn same_accel(a: &str, b: &str) -> bool {
+    let norm = |s: &str| portal_trigger(s).map(|t| t.to_lowercase());
+    norm(a).is_some() && norm(a) == norm(b)
+}
+
+/// The accelerator in a portal trigger description such as
+/// "Press <Shift><Super>s" (GNOME), if it has one.
+pub fn accel_from_description(description: &str) -> Option<String> {
+    let accel = description.trim().trim_start_matches("Press ").trim();
+    portal_trigger(accel).map(|_| accel.to_string())
 }
 
 /// Human-readable form of a GTK accelerator, e.g. "Shift+Super+S".
@@ -70,7 +110,7 @@ pub fn portal_trigger(accel: &str) -> Option<String> {
         mods[i] = true;
         rest = tail;
     }
-    if rest.is_empty() {
+    if rest.is_empty() || rest.contains(char::is_whitespace) {
         return None;
     }
     let mut parts: Vec<&str> = ["CTRL", "ALT", "SHIFT", "LOGO"]
@@ -82,14 +122,16 @@ pub fn portal_trigger(accel: &str) -> Option<String> {
     Some(parts.join("+"))
 }
 
-/// Bind `accel` through the GlobalShortcuts portal; `on_activate` runs on
-/// each press.
+/// Bind `accel` through the GlobalShortcuts portal. `on_activate` runs on
+/// each press; `on_changed` when the user changes the key in the desktop's
+/// settings (with the new trigger description).
 pub async fn register_portal(
     accel: &str,
     on_activate: impl Fn() + 'static,
+    on_changed: impl Fn(String) + 'static,
 ) -> Result<PortalShortcut, String> {
     let err = |e: ashpd::Error| e.to_string();
-    let portal = GlobalShortcuts::new().await.map_err(err)?;
+    let portal = Rc::new(GlobalShortcuts::new().await.map_err(err)?);
     let session = portal
         .create_session(Default::default())
         .await
@@ -108,12 +150,14 @@ pub async fn register_portal(
         return Err("the shortcut was not accepted".into());
     };
     crate::debug!(
-        "portal shortcut bound: {} (asked for {trigger:?})",
-        bound.trigger_description()
+        "portal shortcut bound: {} (asked for {trigger:?}, portal version {})",
+        bound.trigger_description(),
+        portal.version()
     );
+    let description = Rc::new(RefCell::new(bound.trigger_description().to_string()));
     let mut activated = portal.receive_activated().await.map_err(err)?;
-    let task = glib::spawn_future_local(async move {
-        let _portal = portal;
+    let mut changed = portal.receive_shortcuts_changed().await.map_err(err)?;
+    let activated_task = glib::spawn_future_local(async move {
         while let Some(event) = activated.next().await {
             if event.shortcut_id() == SHORTCUT_ID {
                 crate::debug!("portal shortcut activated");
@@ -121,7 +165,25 @@ pub async fn register_portal(
             }
         }
     });
-    Ok(PortalShortcut { session, task })
+    let changed_task = glib::spawn_future_local(glib::clone!(
+        #[strong]
+        description,
+        async move {
+            while let Some(event) = changed.next().await {
+                if let Some(s) = event.shortcuts().iter().find(|s| s.id() == SHORTCUT_ID) {
+                    crate::debug!("portal shortcut changed: {}", s.trigger_description());
+                    description.replace(s.trigger_description().to_string());
+                    on_changed(s.trigger_description().to_string());
+                }
+            }
+        }
+    ));
+    Ok(PortalShortcut {
+        portal,
+        session,
+        trigger: description,
+        tasks: vec![activated_task, changed_task],
+    })
 }
 
 fn gnome_schemas_present() -> bool {
@@ -177,6 +239,21 @@ pub fn set_gnome_binding(accel: Option<&str>) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn same_accel() {
+        assert!(super::same_accel("<Shift><Super>s", "<Super><Shift>S"));
+        assert!(!super::same_accel("<Shift><Super>s", "<Control><Alt>k"));
+    }
+
+    #[test]
+    fn accel_from_gnome_description() {
+        assert_eq!(
+            super::accel_from_description("Press <Shift><Super>s").as_deref(),
+            Some("<Shift><Super>s")
+        );
+        assert_eq!(super::accel_from_description("Press something odd"), None);
+    }
+
     #[test]
     fn portal_trigger_format() {
         assert_eq!(
