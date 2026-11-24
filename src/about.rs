@@ -23,7 +23,7 @@ pub fn show(app: &gtk::Application, parent: Option<&gtk::Window>, token: Option<
         .website("https://github.com/schonbeck/klip")
         .website_label("github.com/schonbeck/klip")
         .authors(["Stephan Victor Schönbeck"])
-        .logo_icon_name("applets-screenshooter")
+        .logo_icon_name(crate::desktop::icon_name())
         .modal(parent.is_some())
         .build();
     dialog.set_transient_for(parent);
