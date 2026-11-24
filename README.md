@@ -4,8 +4,8 @@ A tiny, native Wayland region screenshot tool for Linux. Press a hotkey, drag a
 rectangle, annotate if you like, then Copy or Save.
 
 Status: milestone 4 (capture, select, annotate, Copy / Save / Cancel,
-settings, background mode with a global shortcut and tray icon). No packages
-yet; build from source.
+settings, background mode with a global shortcut and tray icon). Packages:
+a .deb on GitHub Releases and a Homebrew tap.
 
 ## What it does
 
@@ -73,6 +73,27 @@ key than the one set in klip's settings. `KLIP_SHORTCUT_BACKEND=portal` or
 for the portals and [ksni](https://github.com/iovxw/ksni) for the tray icon
 (plain D-Bus, no GTK3). One small, fast-starting binary (important for a hotkey tool),
 no runtime to ship, and straightforward to package.
+
+## Install
+
+**Ubuntu 26.04 / Debian-based** (amd64): download `klip_<version>_amd64.deb`
+from the [latest release](https://github.com/schonbeck/klip/releases/latest),
+then
+
+```sh
+sudo apt install ./klip_*_amd64.deb
+klip
+```
+
+**Homebrew on Linux**:
+
+```sh
+brew install schonbeck/tap/klip
+klip
+```
+
+The first `klip` stays in the background (tray icon, global shortcut, start
+at login). See [Try it](#try-it-ubuntu-2604-gnome-on-wayland) below.
 
 ## Build from source
 
@@ -244,16 +265,31 @@ headless GNOME Shell.
 - `src/selector.rs`: the fullscreen selection widget (drawing and dragging).
 - `src/geometry.rs`: rectangle math, HiDPI and monitor mapping (unit tested).
 - `src/output.rs`: crop, clipboard and PNG saving.
+- `src/about.rs`: the About dialog.
+- `data/`: desktop file and icon (installed by the packages).
+- `packaging/`: Homebrew formula template and the formula bump script.
 
-## Packaging plan
+## Packaging
 
-- **.deb** built in GitHub Actions and attached to GitHub Releases; later a PPA
-  so `apt install klip` works on Ubuntu.
-- **Homebrew on Linux** via a tap (`schonbeck/homebrew-tap`).
-- Later, optionally: Flatpak on Flathub. Snap is a poor fit (sandbox makes
-  screenshots and clipboard awkward).
+- **.deb**: `.github/workflows/release.yml` builds it with
+  [cargo-deb](https://github.com/kornelski/cargo-deb) in an `ubuntu:26.04`
+  container whenever a `vX.Y.Z` tag is pushed, and attaches
+  `klip_X.Y.Z_amd64.deb`, the source tarball `klip-X.Y.Z.tar.gz` and
+  `SHA256SUMS` to the GitHub Release. Built on Ubuntu 26.04, the package
+  needs its library versions (glibc, GTK 4.12+). Pull requests that touch
+  packaging build the same files as a workflow artifact.
+- **Homebrew**: the formula lives in
+  [schonbeck/homebrew-tap](https://github.com/schonbeck/homebrew-tap)
+  (template: `packaging/homebrew/klip.rb`). It builds from the release source
+  tarball. After a release, `packaging/bump-formula.sh X.Y.Z
+  path/to/homebrew-tap/Formula/klip.rb` updates its url and sha256. The release
+  workflow does that automatically if the repository secret
+  `HOMEBREW_TAP_TOKEN` is set (a token that can push to the tap).
+- No PPA or apt repository yet. Later, optionally: Flatpak on Flathub. Snap
+  is a poor fit (its sandbox makes screenshots and the clipboard awkward).
 
-Nothing is published anywhere public without the owner's explicit OK.
+To release: bump `version` in `Cargo.toml`, merge, then
+`git tag vX.Y.Z && git push origin vX.Y.Z`.
 
 ## Milestones
 
@@ -261,7 +297,7 @@ Nothing is published anywhere public without the owner's explicit OK.
 2. Save / Cancel buttons and PNG save.
 3. Annotation tools (arrow, line, ellipse) and color picker.
 4. Copy button, settings, background mode with global shortcut, autostart, tray icon.
-5. CI builds, .deb, Homebrew tap formula.
+5. Release workflow: .deb on GitHub Releases, Homebrew tap formula.
 
 ## License
 
