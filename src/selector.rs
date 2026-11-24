@@ -1,7 +1,9 @@
 //! `SelectionView`: a widget that shows the frozen screenshot, lets the user
 //! drag a rectangle with the left mouse button, dims everything outside it
-//! and outlines the selection.
+//! and outlines the selection. With an annotation tool active, dragging
+//! inside the selection draws a shape instead.
 
+use crate::annotate::{Shape, Tool};
 use crate::geometry::{self, Rect};
 use gtk::{gdk, glib, graphene, gsk, prelude::*, subclass::prelude::*};
 
@@ -28,6 +30,14 @@ mod imp {
         pub committed: Cell<Option<Rect>>,
         /// Called when a drag ends with a usable selection.
         pub on_selected: RefCell<Option<SelectedFn>>,
+        pub tool: Cell<Tool>,
+        pub color: Cell<Option<gdk::RGBA>>,
+        /// Finished annotations, oldest first.
+        pub shapes: RefCell<Vec<Shape>>,
+        /// The shape being dragged right now.
+        pub preview: Cell<Option<Shape>>,
+        /// Bumped on every change to `shapes`.
+        pub revision: Cell<u64>,
     }
 
     #[glib::object_subclass]
@@ -84,6 +94,15 @@ mod imp {
                 &[o; 4],
                 &[OUTLINE; 4],
             );
+            // Annotations, clipped to the selection.
+            let shapes = self.shapes.borrow();
+            let preview = self.preview.get();
+            if !shapes.is_empty() || preview.is_some() {
+                let cr = snapshot.append_cairo(&graphene::Rect::new(sx, sy, sw, sh));
+                for shape in shapes.iter().chain(preview.iter()) {
+                    shape.draw(&cr);
+                }
+            }
         }
     }
 }
@@ -111,16 +130,82 @@ impl SelectionView {
         self.imp().on_selected.replace(Some(Box::new(f)));
     }
 
+    pub fn set_tool(&self, tool: Tool) {
+        self.imp().tool.set(tool);
+    }
+
+    pub fn set_color(&self, color: gdk::RGBA) {
+        self.imp().color.set(Some(color));
+    }
+
+    pub fn shapes(&self) -> Vec<Shape> {
+        self.imp().shapes.borrow().clone()
+    }
+
+    /// Changes whenever the annotations change.
+    pub fn revision(&self) -> u64 {
+        self.imp().revision.get()
+    }
+
+    /// Remove the newest annotation.
+    pub fn undo(&self) {
+        if self.imp().shapes.borrow_mut().pop().is_some() {
+            self.bump();
+        }
+    }
+
+    fn bump(&self) {
+        let imp = self.imp();
+        imp.revision.set(imp.revision.get() + 1);
+        self.queue_draw();
+    }
+
+    /// Maps widget coordinates to screenshot pixels:
+    /// `image = offset + widget * scale`.
+    pub fn image_transform(&self) -> ((f64, f64), (f64, f64)) {
+        let src = self.source_region();
+        let scale = (src.w / self.width() as f64, src.h / self.height() as f64);
+        ((src.x, src.y), scale)
+    }
+
+    fn drawing(&self) -> bool {
+        self.imp().tool.get() != Tool::Select
+    }
+
     fn setup_drag(&self) {
         let drag = gtk::GestureDrag::builder()
             .button(gdk::BUTTON_PRIMARY)
             .build();
+        drag.connect_drag_begin(glib::clone!(
+            #[weak(rename_to = view)]
+            self,
+            move |_, x, y| {
+                crate::debug!("drag begin at ({x}, {y}), tool {:?}", view.imp().tool.get());
+                let imp = view.imp();
+                let inside = imp.committed.get().is_some_and(|r| r.contains(x, y));
+                if view.drawing() && inside {
+                    imp.preview.set(Some(Shape {
+                        tool: imp.tool.get(),
+                        start: (x, y),
+                        end: (x, y),
+                        color: imp.color.get().unwrap_or(gdk::RGBA::RED),
+                    }));
+                }
+            }
+        ));
         drag.connect_drag_update(glib::clone!(
             #[weak(rename_to = view)]
             self,
             move |gesture, dx, dy| {
-                if let Some((x, y)) = gesture.start_point() {
+                let Some((x, y)) = gesture.start_point() else {
+                    return;
+                };
+                if !view.drawing() {
                     view.set_selection(Some(Rect::from_points(x, y, x + dx, y + dy)));
+                } else if let Some(mut shape) = view.imp().preview.get() {
+                    shape.end = (x + dx, y + dy);
+                    view.imp().preview.set(Some(shape));
+                    view.queue_draw();
                 }
             }
         ));
@@ -131,7 +216,15 @@ impl SelectionView {
                 let Some((x, y)) = gesture.start_point() else {
                     return;
                 };
-                view.finish_selection(Rect::from_points(x, y, x + dx, y + dy));
+                if !view.drawing() {
+                    view.finish_selection(Rect::from_points(x, y, x + dx, y + dy));
+                } else if let Some(mut shape) = view.imp().preview.take() {
+                    shape.end = (x + dx, y + dy);
+                    if !shape.is_tiny() {
+                        view.imp().shapes.borrow_mut().push(shape);
+                    }
+                    view.bump();
+                }
             }
         ));
         self.add_controller(drag);
@@ -149,6 +242,9 @@ impl SelectionView {
                     self.source_region(),
                 );
                 self.imp().committed.set(Some(sel));
+                // Annotations belong to the old selection.
+                self.imp().shapes.borrow_mut().clear();
+                self.bump();
                 if let Some(cb) = self.imp().on_selected.borrow().as_ref() {
                     cb(sel, image_rect);
                 }

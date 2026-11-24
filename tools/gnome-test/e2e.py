@@ -22,6 +22,21 @@ def pump(sec):
 def key(sym):
     for st in (True, False):
         call(RD, sess, SI, "NotifyKeyboardKeysym", GLib.Variant("(ub)", (sym, st))); pump(0.05)
+BTN_LEFT = 272
+SCREEN_H = 1080  # the virtual monitor
+def move_to(x, y):
+    # No absolute motion without a screencast stream. Go to the bottom-left
+    # corner first (the top-left one is GNOME's hot corner), then move up,
+    # then right.
+    for dx, dy in ((-10000.0, 10000.0), (0.0, float(y - (SCREEN_H - 1))), (float(x), 0.0)):
+        call(RD, sess, SI, "NotifyPointerMotionRelative", GLib.Variant("(dd)", (dx, dy))); pump(0.05)
+def drag(x0, y0, x1, y1, steps=8):
+    move_to(x0, y0)
+    call(RD, sess, SI, "NotifyPointerButton", GLib.Variant("(ib)", (BTN_LEFT, True))); pump(0.1)
+    for i in range(1, steps + 1):
+        call(RD, sess, SI, "NotifyPointerMotionRelative", GLib.Variant("(dd)", ((x1 - x0) / steps, (y1 - y0) / steps))); pump(0.04)
+    pump(0.1)
+    call(RD, sess, SI, "NotifyPointerButton", GLib.Variant("(ib)", (BTN_LEFT, False))); pump(0.3)
 def shot(name):
     token = "t%d" % random.randint(0, 1 << 30)
     sender = bus.get_unique_name()[1:].replace(".", "_")
@@ -67,7 +82,15 @@ for a in seq:
     c = a[0]
     if c == "klip": procs.append(klip(a[1], a[2])); print("started klip", a[1])
     elif c == "wait": pump(a[1])
-    elif c == "key": key({"esc": ESC, "ret": RET, "shift": 0xffe1}[a[1]]); print("key", a[1])
+    elif c == "key":
+        k = a[1]
+        sym = {"esc": ESC, "ret": RET, "shift": 0xffe1}.get(k) or ord(k)
+        key(sym); print("key", k)
+    elif c == "ctrlkey":
+        call(RD, sess, SI, "NotifyKeyboardKeysym", GLib.Variant("(ub)", (0xffe3, True))); pump(0.05)
+        key(ord(a[1])); pump(0.05)
+        call(RD, sess, SI, "NotifyKeyboardKeysym", GLib.Variant("(ub)", (0xffe3, False))); pump(0.05); print("ctrl+" + a[1])
+    elif c == "drag": drag(*a[1:5]); print("drag", a[1:5])
     elif c == "shot": shot(a[1])
     elif c == "clip": clip_read(a[1])
     elif c == "status": print("klip procs:", [p.poll() for p in procs], "saved:", glob.glob(os.path.expanduser("~/**/klip-*.png"), recursive=True))
