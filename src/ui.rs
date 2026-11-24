@@ -59,10 +59,11 @@ const CSS: &str = "
 const SWATCHES: [&str; 4] = ["#e01b24", "#f6d32d", "#2ec27e", "#3584e4"];
 
 /// Annotation tools: tool, label, tooltip, shortcut key.
-const TOOLS: [(Tool, &str, &str, char); 4] = [
+const TOOLS: [(Tool, &str, &str, char); 5] = [
     (Tool::Select, "⬚", "Select a new region (S)", 's'),
     (Tool::Arrow, "↗", "Arrow (A)", 'a'),
     (Tool::Line, "╱", "Line (L)", 'l'),
+    (Tool::Rectangle, "▭", "Rectangle (R)", 'r'),
     (Tool::Ellipse, "◯", "Ellipse (E)", 'e'),
 ];
 

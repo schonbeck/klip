@@ -16,7 +16,7 @@ a .deb on GitHub Releases and a Homebrew tap.
   unless you click Copy (or press Enter).
 - **Save** writes the PNG to `~/Pictures/Screenshots` without asking (the
   folder can be changed in the settings) and closes.
-- Annotate with arrows, lines and circles/ellipses, in a color you pick.
+- Annotate with arrows, lines, rectangles and circles/ellipses, in a color you pick.
 - No setup questions: klip starts with sensible defaults (save to
   `~/Pictures/Screenshots`, start at login, Ctrl+Alt+P), all changeable in
   the settings.
@@ -34,7 +34,7 @@ no wlr-layer-shell or wlr-screencopy (GNOME supports neither).
    to grab the full screen as a PNG.
 2. **Select**: show that frozen image in a fullscreen GTK4 window. The user
    drags a rectangle; Esc cancels.
-3. **Annotate**: in the same window, a small toolbar with arrow, line, ellipse,
+3. **Annotate**: in the same window, a small toolbar with arrow, line, rectangle, ellipse,
    color picker, Save and Cancel. Drawing happens on a GTK4 drawing area with
    cairo.
 4. **Output**: Copy puts the cropped (and annotated) image on the clipboard as
@@ -135,7 +135,7 @@ toolbar appears next to the selection:
 | Copy to the clipboard and close | **Copy** | Enter, Ctrl+C |
 | Save to the screenshot folder and close | **Save** | Ctrl+S |
 | Close without copying | **Cancel** | Esc |
-| Select a new region / Arrow / Line / Ellipse | ⬚ ↗ ╱ ◯ | S, A, L, E |
+| Select a new region / Arrow / Line / Rectangle / Ellipse | ⬚ ↗ ╱ ▭ ◯ | S, A, L, R, E |
 | Colors | swatches, color button | 1-4 |
 | Undo the last shape | | Ctrl+Z |
 | Settings | ⚙ | |
@@ -144,7 +144,7 @@ toolbar appears next to the selection:
   exists) to `~/Pictures/Screenshots` (created if needed; the XDG pictures
   folder), with no dialog, and shows a "Screenshot saved" notification with
   the path. Change the folder in the settings.
-- **Annotate**: pick Arrow, Line or Ellipse and drag inside the selection.
+- **Annotate**: pick Arrow, Line, Rectangle (outline) or Ellipse and drag inside the selection.
   Picking a color also switches from Select to Arrow. Annotations are baked
   into the copied or saved PNG.
 - With the Select tool (the default), drag again to replace the selection
@@ -193,7 +193,10 @@ klip --daemon      # run the background klip in this terminal (for debugging;
 - **Tray icon** (background mode): click for the menu: Take Screenshot,
   Settings, About klip, Quit. It needs a StatusNotifierItem host, like Ubuntu's
   AppIndicator extension (on by default on Ubuntu) or KDE. Without one,
-  klip runs without a tray icon.
+  klip runs without a tray icon. The icon is embedded in the binary (16-64 px
+  pixmaps rendered from `data/io.github.schonbeck.klip.svg` into
+  `data/tray/`), so it shows however klip was installed; with the .deb the
+  tray also gets the themed icon name.
 - **Quit** in the tray menu stops the background klip. If klip uses the
   GNOME custom keybinding, the key keeps working (it starts klip again).
 
