@@ -3,7 +3,7 @@
 use gtk::glib;
 use std::path::PathBuf;
 
-pub const DEFAULT_SHORTCUT: &str = "<Super><Shift>s";
+pub const DEFAULT_SHORTCUT: &str = "<Control><Shift>p";
 const GROUP: &str = "klip";
 
 #[derive(Clone, Debug)]
@@ -12,7 +12,7 @@ pub struct Config {
     pub save_dir: Option<PathBuf>,
     /// Start `klip --daemon` at login (XDG autostart).
     pub autostart: bool,
-    /// GTK accelerator, e.g. `<Super><Shift>s`.
+    /// GTK accelerator, e.g. `<Control><Shift>p`.
     pub shortcut: String,
 }
 

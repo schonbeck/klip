@@ -202,6 +202,16 @@ pub fn open(app: &Rc<App>, parent: Option<&gtk::Window>) {
         window,
         move |_| window.close()
     ));
+    let about = gtk::Button::with_label("About klip");
+    about.set_halign(gtk::Align::Start);
+    about.connect_clicked(glib::clone!(
+        #[weak]
+        app,
+        #[weak]
+        window,
+        move |_| crate::about::show(&app.app, Some(&window), None)
+    ));
+    grid.attach(&about, 0, 4, 1, 1);
     grid.attach(&close, 1, 4, 1, 1);
 
     window.set_child(Some(&grid));

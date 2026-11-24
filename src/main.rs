@@ -6,6 +6,7 @@
 //! klip is a single-instance app: `klip --daemon` stays in the background
 //! with a global shortcut; a plain `klip` while it runs asks it to capture.
 
+mod about;
 mod annotate;
 mod app;
 mod capture;

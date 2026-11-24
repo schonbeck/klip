@@ -18,7 +18,7 @@ yet; build from source.
   folder can be changed in the settings) and closes.
 - Annotate with arrows, lines and circles/ellipses, in a color you pick.
 - No setup questions: klip starts with sensible defaults (save to
-  `~/Pictures/Screenshots`, start at login, Super+Shift+S), all changeable in
+  `~/Pictures/Screenshots`, start at login, Ctrl+Shift+P), all changeable in
   the settings.
 - Runs in the background (started at login) with a configurable global
   keyboard shortcut and a tray icon.
@@ -97,7 +97,7 @@ cargo build --release
 
 There are no setup questions. The first launch saves the default settings
 (`~/.config/klip/config.ini`), turns on start at login, and this klip stays
-in the background right away (shortcut Super+Shift+S, tray icon). Then it
+in the background right away (shortcut Ctrl+Shift+P, tray icon). Then it
 takes the screenshot. If you turn off start at login in the settings, it
 stays off, and `klip` runs one-shot.
 
@@ -139,7 +139,8 @@ klip --settings    # open the settings
   "klip" entry in the app grid): the save folder (default
   `~/Pictures/Screenshots`), **Start at login** (default on) and the
   **screenshot shortcut** (click the button, press the new keys; Esc
-  cancels). Changes apply right away. Stored in `~/.config/klip/config.ini`.
+  cancels). Changes apply right away. **About klip** shows the version
+  (with git commit), license and website. Stored in `~/.config/klip/config.ini`.
 - **Start at login** writes `~/.config/autostart/io.github.schonbeck.klip.desktop`
   (runs `klip --daemon`); turning it off removes the file. The first launch
   writes it silently (only when there's no config file yet). While it's on,
@@ -152,7 +153,7 @@ klip --settings    # open the settings
   (opens the settings; right-click → "Take Screenshot"). Desktops use it
   for the app name in notifications and permission dialogs.
 - **Tray icon** (background mode): click for the menu: Take Screenshot,
-  Settings, Quit. It needs a StatusNotifierItem host, like Ubuntu's
+  Settings, About klip, Quit. It needs a StatusNotifierItem host, like Ubuntu's
   AppIndicator extension (on by default on Ubuntu) or KDE. Without one,
   klip runs without a tray icon.
 - **Quit** in the tray menu stops background mode. If klip uses the GNOME
@@ -161,7 +162,10 @@ klip --settings    # open the settings
 ### Coming from an earlier build of this branch
 
 An earlier build asked "Start klip automatically at login?" and saved the
-answer. To start over with the defaults:
+answer, and the default shortcut was Super+Shift+S (now Ctrl+Shift+P).
+Settings are saved with their values, so an existing `config.ini` keeps
+Super+Shift+S until you change it in the settings. To start over with the
+defaults:
 
 ```sh
 pkill -x klip

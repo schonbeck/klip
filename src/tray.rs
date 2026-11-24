@@ -11,6 +11,7 @@ use ksni::TrayMethods;
 pub enum Command {
     Capture,
     Settings,
+    About,
     Quit,
 }
 
@@ -64,6 +65,7 @@ impl ksni::Tray for KlipTray {
                 Command::Capture,
             ),
             item("Settings", "emblem-system-symbolic", Command::Settings),
+            item("About klip", "help-about-symbolic", Command::About),
             ksni::MenuItem::Separator,
             item("Quit", "application-exit-symbolic", Command::Quit),
         ]

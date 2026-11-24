@@ -179,6 +179,10 @@ impl App {
                     });
                 }
                 tray::Command::Settings => this.run(Action::Settings),
+                tray::Command::About => {
+                    let token = this.take_activation_token();
+                    crate::about::show(&this.app, None, token.as_deref());
+                }
                 tray::Command::Quit => this.app.quit(),
             }
         })
@@ -263,7 +267,7 @@ impl App {
         }
     }
 
-    /// The shortcut as the user sees it, e.g. "Shift+Super+S".
+    /// The shortcut as the user sees it, e.g. "Shift+Ctrl+P".
     pub fn shortcut_label(&self) -> String {
         shortcut::label(&self.config.borrow().shortcut)
     }
