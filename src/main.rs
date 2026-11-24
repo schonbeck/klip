@@ -110,6 +110,11 @@ fn main() -> glib::ExitCode {
     }
     debug!("klip {VERSION}");
     let action = parse_args(&args, |p| Some(p.into())).expect("checked above");
+    // Rewrite a stale app-grid entry before we start (or become) the
+    // background klip. Remotes never run App::new, so this must happen here.
+    if let Err(err) = desktop::install_launcher() {
+        eprintln!("klip: could not write the .desktop file: {err}");
+    }
     if !matches!(action, Action::Daemon) {
         // Run the background klip as its own process, detached from this
         // terminal, and hand it the request below (GApplication forwards the

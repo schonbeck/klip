@@ -162,12 +162,15 @@ klip --daemon      # run the background klip in this terminal (for debugging;
                    # Ctrl+C stops it), or do nothing if it's already running
 ```
 
-- **Settings** (gear in the toolbar, tray menu, `klip --settings`, or the
-  "klip" entry in the app grid): the save folder (default
+- **Settings** (gear in the toolbar, tray menu, `klip --settings`, or
+  right-click the app-grid / dock icon → Settings): the save folder (default
   `~/Pictures/Screenshots`), **Start at login** (default on) and the
   **screenshot shortcut** (click the button, press the new keys; Esc
   cancels). Changes apply right away. **About klip** shows the version
   (with git commit), license and website. Stored in `~/.config/klip/config.ini`.
+  Opening klip from the app grid starts a screenshot, like a plain `klip`
+  or the shortcut; after Copy, Save or Esc the background klip stays in
+  the tray. Closing the settings window does the same.
 - **Start at login** writes `~/.config/autostart/io.github.schonbeck.klip.desktop`
   (runs `klip --daemon`); turning it off removes the file. The first launch
   writes it silently (only when there's no config file yet), and the
@@ -179,12 +182,14 @@ klip --daemon      # run the background klip in this terminal (for debugging;
   screenshot tool needs anyway), and Settings → Apps lists it as a startup
   app on GNOME.
 - klip also installs `~/.local/share/applications/io.github.schonbeck.klip.desktop`
-  (opens the settings; right-click → "Take Screenshot"), unless a package
-  (the .deb) installed one in `/usr/share/applications`. Homebrew's own copy
-  lives in `<prefix>/share`, which GNOME doesn't search, so with Homebrew
-  this is the one in the app grid. Desktops also use it for the app name in
-  notifications and permission dialogs. Closing the settings window leaves
-  the background klip running.
+  (starts a screenshot; right-click → Settings), unless a package (the .deb)
+  installed one in `/usr/share/applications`. Homebrew's own copy lives in
+  `<prefix>/share`, which GNOME often doesn't search, so with Homebrew this
+  per-user file is the one in the app grid, with an absolute `Exec=` path.
+  It is rewritten on every launch, so a leftover entry from an older version
+  (one that opened the settings, or named a removed Homebrew Cellar path)
+  is replaced. Desktops also use it for the app name in notifications and
+  permission dialogs.
 - **Tray icon** (background mode): click for the menu: Take Screenshot,
   Settings, About klip, Quit. It needs a StatusNotifierItem host, like Ubuntu's
   AppIndicator extension (on by default on Ubuntu) or KDE. Without one,
@@ -192,15 +197,27 @@ klip --daemon      # run the background klip in this terminal (for debugging;
 - **Quit** in the tray menu stops the background klip. If klip uses the
   GNOME custom keybinding, the key keeps working (it starts klip again).
 
-### Coming from 0.1.0
+### Coming from 0.1.1 or 0.1.0
 
-0.1.0 ran the background klip inside the terminal that started it (the
-prompt didn't come back, and Ctrl+C or closing the terminal ended it), and
-the app-grid entry opened the settings in a klip that quit when the window
-closed. With Homebrew its autostart entry and app-grid entry also named the
-versioned Cellar path. 0.1.1 fixes all of this, and rewrites both entries
-the first time it runs, so after upgrading just run `pkill -x klip; klip`
-once.
+0.1.1 and earlier used an app-grid entry that opened the settings, and
+0.1.0 also quit when that window closed. 0.1.2 starts a screenshot from the
+app grid instead, and rewrites the per-user `.desktop` file on every launch
+(not only when the background klip starts). After upgrading:
+
+```sh
+pkill -x klip
+rm -f ~/.local/share/applications/io.github.schonbeck.klip.desktop
+klip
+```
+
+The last `klip` returns straight away, rewrites the app-grid entry, and
+leaves klip in the tray. If the icon in the app grid does nothing after a
+Homebrew upgrade, the leftover entry still named a removed `Cellar/klip/0.1.0`
+path; removing that file and running `klip` once (as above) fixes it.
+
+0.1.0 also ran the background klip inside the terminal that started it, and
+its autostart entry named the versioned Cellar path. 0.1.1 already fixed
+those: the background klip is detached, and autostart uses `<prefix>/bin/klip`.
 
 ### Coming from an earlier build of this branch
 

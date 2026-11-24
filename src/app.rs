@@ -126,18 +126,18 @@ impl App {
                 Action::Daemon => this.become_daemon().await,
                 Action::Settings => {
                     // Normally the detached background klip runs this; if it
-                    // couldn't be started, keep this one running instead, so
-                    // closing the window doesn't take the shortcut away.
-                    if this.config.borrow().autostart && !this.is_daemon() {
+                    // couldn't be started, this process stays in the
+                    // background so closing the window doesn't quit klip.
+                    if !this.is_daemon() {
                         this.become_daemon().await;
                     }
                     settings::open(&this, None)
                 }
                 Action::Capture(file) => {
-                    // With "start at login" on, klip is meant to be running in
-                    // the background: if it isn't yet (e.g. right after
-                    // installing), this klip becomes the background one.
-                    if this.config.borrow().autostart && !this.is_daemon() {
+                    // If the detached background klip couldn't be started,
+                    // this process stays in the tray after the capture window
+                    // closes (Copy, Save or Esc).
+                    if !this.is_daemon() {
                         this.become_daemon().await;
                     }
                     this.capture(file).await

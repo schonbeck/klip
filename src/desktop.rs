@@ -46,13 +46,23 @@ pub fn exe() -> String {
     }
 }
 
-/// Whether a system-wide (e.g. the .deb's) desktop file for klip exists.
-fn system_launcher() -> bool {
-    glib::system_data_dirs().iter().any(|d| {
-        d.join("applications")
+/// Whether the .deb (or a similar /usr install) shipped a desktop file.
+/// Homebrew's copy in `<prefix>/share` doesn't count: GNOME often doesn't
+/// have that directory in `XDG_DATA_DIRS`, so we still write a per-user
+/// launcher with an absolute `Exec=` path.
+fn distro_package_launcher() -> bool {
+    ["/usr/share", "/usr/local/share"].iter().any(|d| {
+        Path::new(d)
+            .join("applications")
             .join(format!("{APP_ID}.desktop"))
             .exists()
     })
+}
+
+fn user_launcher_path() -> PathBuf {
+    glib::user_data_dir()
+        .join("applications")
+        .join(format!("{APP_ID}.desktop"))
 }
 
 fn icon_in(dir: &Path) -> PathBuf {
@@ -126,33 +136,47 @@ fn write_if_changed(path: PathBuf, content: &str) -> io::Result<()> {
     std::fs::write(path, content)
 }
 
-/// `~/.local/share/applications/<app id>.desktop`: opens the settings; its
-/// "Take Screenshot" action captures.
+/// The app-grid / menu entry: starts a region capture. A "Settings" desktop
+/// action (right-click on the icon or dock) opens the settings.
+///
+/// Called on every launch (not only in the background process) so a stale
+/// 0.1.0 entry that opens settings, or names a removed Homebrew Cellar path,
+/// is rewritten even if the background klip isn't running yet.
 pub fn install_launcher() -> io::Result<()> {
-    let path = glib::user_data_dir()
-        .join("applications")
-        .join(format!("{APP_ID}.desktop"));
-    if system_launcher() {
-        // Installed from a package, which ships its own. A copy written by an
-        // earlier (e.g. self-built) klip would hide it, so remove that.
-        if std::fs::read_to_string(&path)
-            .is_ok_and(|old| old.contains(GENERATED_COMMENT) && !old.contains("GenericName="))
-        {
-            std::fs::remove_file(&path)?;
+    let path = user_launcher_path();
+    if distro_package_launcher() {
+        // The .deb already ships a launcher in `/usr/share`. A per-user copy
+        // (from an earlier self-built or Homebrew klip) would hide it.
+        match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
         }
-        return Ok(());
+    } else {
+        write_if_changed(path, &launcher_file(&exe(), &desktop_icon()))
     }
-    let exe = exe();
-    let content = entry(
-        &format!("{exe} --settings"),
-        &format!(
-            "Actions=capture;\n\n\
-             [Desktop Action capture]\n\
-             Name=Take Screenshot\n\
-             Exec={exe}\n"
-        ),
-    );
-    write_if_changed(path, &content)
+}
+
+/// Contents of the app-grid `.desktop` file (`exec` is already quoted for
+/// `Exec=`). The packaged file in `data/` is the same, with `Exec=klip`.
+fn launcher_file(exec: &str, icon: &str) -> String {
+    format!(
+        "[Desktop Entry]\n\
+         Type=Application\n\
+         Name=klip\n\
+         GenericName=Screenshot Tool\n\
+         Comment={GENERATED_COMMENT}\n\
+         Exec={exec}\n\
+         Icon={icon}\n\
+         Terminal=false\n\
+         Categories=Utility;Graphics;\n\
+         Keywords=screenshot;capture;snip;clipboard;\n\
+         StartupNotify=true\n\
+         Actions=settings;\n\
+         \n\
+         [Desktop Action settings]\n\
+         Name=Settings\n\
+         Exec={exec} --settings\n"
+    )
 }
 
 fn autostart_path() -> PathBuf {
@@ -199,5 +223,34 @@ mod tests {
         std::fs::remove_file(root.join("bin/klip")).unwrap();
         assert_eq!(stable_path(&cellar.join("klip")), None);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn app_grid_launcher_starts_a_capture_and_has_a_settings_action() {
+        let file = launcher_file("/opt/klip/bin/klip", "io.github.schonbeck.klip");
+        let (entry, action) = file
+            .split_once("[Desktop Action settings]\n")
+            .expect("settings action");
+        assert!(
+            entry.contains("Exec=/opt/klip/bin/klip\n"),
+            "app grid should start a capture, not settings: {file}"
+        );
+        assert!(
+            !entry.contains("Exec=/opt/klip/bin/klip --settings"),
+            "main Exec must not open settings: {file}"
+        );
+        assert!(file.contains("Actions=settings;"));
+        assert!(action.contains("Exec=/opt/klip/bin/klip --settings\n"));
+        assert!(file.contains("GenericName=Screenshot Tool"));
+        assert!(file.contains(&format!("Comment={GENERATED_COMMENT}")));
+    }
+
+    #[test]
+    fn packaged_desktop_file_matches_the_app_grid_behaviour() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("data/io.github.schonbeck.klip.desktop");
+        let file = std::fs::read_to_string(path).unwrap();
+        let expected = launcher_file("klip", "io.github.schonbeck.klip");
+        assert_eq!(file, expected);
     }
 }
