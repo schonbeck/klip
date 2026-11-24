@@ -177,6 +177,13 @@ impl App {
     async fn become_daemon(self: &Rc<Self>) {
         self.daemon.replace(Some(self.app.hold()));
         crate::debug!("running in the background");
+        // Keep the autostart entry pointing at this binary (an older one may
+        // name a path that's gone, e.g. a Homebrew Cellar version).
+        if self.config.borrow().autostart
+            && let Err(err) = desktop::set_autostart(true)
+        {
+            eprintln!("klip: could not update start at login: {err}");
+        }
         self.apply_shortcut().await;
         let this = Rc::downgrade(self);
         let tray = tray::spawn(move |cmd, token| {
