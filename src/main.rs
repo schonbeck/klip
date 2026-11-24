@@ -4,7 +4,8 @@
 //! Copy (clipboard) or Save (PNG in the configured folder).
 //!
 //! klip is a single-instance app: `klip --daemon` stays in the background
-//! with a global shortcut; a plain `klip` while it runs asks it to capture.
+//! with a global shortcut; a plain `klip` starts it (detached) if needed and
+//! asks it to capture.
 
 mod about;
 mod annotate;
@@ -55,8 +56,10 @@ Copy (Enter) puts it on the clipboard, Save (Ctrl+S) writes a PNG to the
 screenshot folder, Cancel (Esc) closes.
 
 Options:
-  --daemon       Stay in the background and take a screenshot on the global
-                 shortcut (or whenever `klip` is run)
+  --daemon       Run the background klip in this terminal (it takes a
+                 screenshot on the global shortcut or whenever `klip` is run).
+                 Without it, klip starts the background klip by itself,
+                 detached, and the command returns right away.
   --settings     Open the settings (save folder, start at login, shortcut)
   --file <PNG>   Use an existing image instead of taking a screenshot (testing)
   -h, --help     Show this help
