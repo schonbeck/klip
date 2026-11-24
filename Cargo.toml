@@ -9,8 +9,11 @@ repository = "https://github.com/schonbeck/klip"
 publish = false
 
 [dependencies]
-ashpd = { version = "0.14.3", default-features = false, features = ["async-io", "screenshot"] }
+ashpd = { version = "0.14.3", default-features = false, features = ["async-io", "screenshot", "global_shortcuts"] }
+futures-channel = "0.3"
+futures-util = { version = "0.3", default-features = false }
 gtk = { version = "0.11.5", package = "gtk4", features = ["v4_12"] }
+ksni = { version = "0.3", default-features = false, features = ["async-io"] }
 
 [profile.release]
 lto = true

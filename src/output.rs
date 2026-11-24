@@ -1,13 +1,8 @@
 //! What happens with the selected region: crop it, put it on the clipboard,
-//! save it as a PNG file, and stay alive while we own the clipboard.
+//! and save it as a PNG file.
 
 use crate::geometry::PixelRect;
 use gtk::{gdk, gio, glib, prelude::*};
-use std::time::Duration;
-
-/// Give up holding the clipboard after this long.
-const CLIPBOARD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-
 /// Cut `r` out of `texture`.
 pub fn crop(texture: &gdk::Texture, r: PixelRect) -> gdk::Texture {
     let mut downloader = gdk::TextureDownloader::new(texture);
@@ -54,37 +49,4 @@ pub fn save_png(file: &gio::File, image: &gdk::Texture) -> Result<(), glib::Erro
         gio::Cancellable::NONE,
     )?;
     Ok(())
-}
-
-/// Keep the process running (without a window) while we own the clipboard.
-/// On Wayland the clipboard content is served by the owning process, so
-/// exiting would empty it. Quits when another app takes over the clipboard,
-/// or after the timeout. Quits right away if we don't own it.
-pub fn keep_clipboard_alive(app: &gtk::Application, clipboard: &gdk::Clipboard) {
-    if !clipboard.is_local() {
-        app.quit();
-        return;
-    }
-    clipboard.connect_local_notify(glib::clone!(
-        #[weak]
-        app,
-        move |clipboard| {
-            if !clipboard.is_local() {
-                app.quit();
-            }
-        }
-    ));
-    // The hold keeps the app alive without a visible window until then.
-    let hold = app.hold();
-    glib::timeout_add_local_once(
-        CLIPBOARD_TIMEOUT,
-        glib::clone!(
-            #[weak]
-            app,
-            move || {
-                drop(hold);
-                app.quit();
-            }
-        ),
-    );
 }

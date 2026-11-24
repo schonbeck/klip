@@ -1,18 +1,27 @@
 //! klip: a tiny native Wayland region screenshot tool.
 //!
-//! Flow: portal screenshot -> fullscreen selection window -> crop ->
-//! clipboard, with an optional Save to a PNG file.
+//! Flow: portal screenshot -> fullscreen selection window -> annotate ->
+//! Copy (clipboard) or Save (PNG in the configured folder).
+//!
+//! klip is a single-instance app: `klip --daemon` stays in the background
+//! with a global shortcut; a plain `klip` while it runs asks it to capture.
 
 mod annotate;
+mod app;
 mod capture;
+mod config;
+mod desktop;
 mod geometry;
 mod output;
 mod selector;
+mod settings;
+mod shortcut;
+mod tray;
 mod ui;
 
+use app::Action;
 use gtk::{gio, glib, prelude::*};
-use std::cell::Cell;
-use std::path::PathBuf;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 /// `eprintln!` when the environment variable `KLIP_DEBUG` is set.
@@ -38,90 +47,106 @@ const APP_ID: &str = "io.github.schonbeck.klip";
 const USAGE: &str = "\
 Usage: klip [OPTIONS]
 
-Take a region screenshot: drag a rectangle, the PNG goes to the clipboard.
-Then Save (Enter, Ctrl+S) writes it to a file; Cancel (Esc) closes.
+Take a region screenshot: drag a rectangle, annotate it, then
+Copy (Enter) puts it on the clipboard, Save (Ctrl+S) writes a PNG to the
+screenshot folder, Cancel (Esc) closes.
 
 Options:
+  --daemon       Stay in the background and take a screenshot on the global
+                 shortcut (or whenever `klip` is run)
+  --settings     Open the settings (save folder, start at login, shortcut)
   --file <PNG>   Use an existing image instead of taking a screenshot (testing)
   -h, --help     Show this help
   -V, --version  Show the version";
 
-enum Source {
-    Portal,
-    File(PathBuf),
-}
-
-fn parse_args() -> Result<Source, String> {
-    let mut args = std::env::args().skip(1);
-    let mut source = Source::Portal;
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-h" | "--help" => {
-                println!("{USAGE}");
-                std::process::exit(0);
-            }
-            "-V" | "--version" => {
-                println!("klip {VERSION}");
-                std::process::exit(0);
-            }
+/// Parse arguments (without the program name). `--file` paths are kept as
+/// given; `resolve` turns them into a path relative to the caller.
+fn parse_args(
+    args: &[String],
+    resolve: impl Fn(&str) -> Option<std::path::PathBuf>,
+) -> Result<Action, String> {
+    let mut action = Action::Capture(None);
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        action = match arg.as_str() {
+            "--daemon" => Action::Daemon,
+            "--settings" => Action::Settings,
             "--file" => {
-                let path = args.next().ok_or("--file needs a path")?;
-                source = Source::File(path.into());
+                let path = it.next().ok_or("--file needs a path")?;
+                Action::Capture(Some(resolve(path).ok_or("--file: bad path")?))
             }
             other => return Err(format!("unknown argument: {other}\n\n{USAGE}")),
-        }
+        };
     }
-    Ok(source)
+    Ok(action)
 }
 
 fn main() -> glib::ExitCode {
-    let source = match parse_args() {
-        Ok(s) => Rc::new(s),
-        Err(msg) => {
-            eprintln!("klip: {msg}");
-            return glib::ExitCode::FAILURE;
+    // Answer these locally, without contacting a running instance.
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "-h" | "--help" => {
+                println!("{USAGE}");
+                return glib::ExitCode::SUCCESS;
+            }
+            "-V" | "--version" => {
+                println!("klip {VERSION}");
+                return glib::ExitCode::SUCCESS;
+            }
+            _ => {}
         }
-    };
-
+    }
+    // Reject bad arguments here, before a running instance would get them.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Err(msg) = parse_args(&args, |p| Some(p.into())) {
+        eprintln!("klip: {msg}");
+        return glib::ExitCode::FAILURE;
+    }
     debug!("klip {VERSION}");
 
-    // NON_UNIQUE: every hotkey press is its own short-lived process. A new
-    // capture taking the clipboard makes the previous klip exit.
     let app = gtk::Application::builder()
         .application_id(APP_ID)
-        .flags(gio::ApplicationFlags::NON_UNIQUE)
+        .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
-    let failed = Rc::new(Cell::new(false));
-
-    app.connect_activate(glib::clone!(
+    let state: Rc<RefCell<Option<Rc<app::App>>>> = Rc::default();
+    app.connect_startup(glib::clone!(
         #[strong]
-        failed,
+        state,
         move |app| {
-            // No window exists while we wait for the portal; keep the app alive.
-            let hold = app.hold();
-            let (app, source, failed) = (app.clone(), source.clone(), failed.clone());
-            glib::spawn_future_local(async move {
-                let texture = match source.as_ref() {
-                    Source::Portal => capture::from_portal().await,
-                    Source::File(path) => capture::from_file(path),
-                };
-                match texture {
-                    Ok(texture) => ui::show(&app, &texture),
-                    Err(err) => {
-                        eprintln!("klip: could not take screenshot: {err}");
-                        failed.set(true);
-                    }
-                }
-                drop(hold);
-            });
+            state.replace(Some(app::App::new(app)));
         }
     ));
-
-    // GApplication would reject our own options, so don't pass them on.
-    let status = app.run_with_args(&["klip"]);
-    if failed.get() {
-        glib::ExitCode::FAILURE
-    } else {
-        status
-    }
+    let activate_state = state.clone();
+    app.connect_command_line(move |_, cmd| {
+        let Some(state) = state.borrow().clone() else {
+            return glib::ExitCode::FAILURE;
+        };
+        let args: Vec<String> = cmd
+            .arguments()
+            .iter()
+            .skip(1)
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        if cmd.is_remote() {
+            debug!("request from another klip process: {args:?}");
+        }
+        match parse_args(&args, |p| cmd.create_file_for_arg(p).path()) {
+            Ok(action) => {
+                state.run(action);
+                glib::ExitCode::SUCCESS
+            }
+            Err(msg) => {
+                eprintln!("klip: {msg}");
+                glib::ExitCode::FAILURE
+            }
+        }
+    });
+    // Desktop launcher / D-Bus activation without arguments: capture.
+    app.connect_activate(move |_| {
+        debug!("activated");
+        if let Some(state) = activate_state.borrow().clone() {
+            state.run(Action::Capture(None));
+        }
+    });
+    app.run()
 }

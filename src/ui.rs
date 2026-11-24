@@ -1,12 +1,15 @@
 //! The fullscreen window: the selection view plus the toolbar that appears
-//! next to the selection (annotation tools, colors, Save / Cancel).
+//! next to the selection (annotation tools, colors, settings, Copy / Save /
+//! Cancel).
 
 use crate::annotate::{self, Tool};
+use crate::app::App;
 use crate::geometry::{self, PixelRect, Rect};
-use crate::output;
 use crate::selector::SelectionView;
-use gtk::{gdk, gio, glib, prelude::*};
+use crate::{output, settings};
+use gtk::{gdk, glib, prelude::*};
 use std::cell::{Cell, RefCell};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 /// Space between the selection and the toolbar (logical pixels).
@@ -69,12 +72,19 @@ struct Toolbar {
     tools: Vec<(Tool, gtk::ToggleButton)>,
     swatches: Vec<(gdk::RGBA, gtk::Button)>,
     color: gtk::ColorDialogButton,
+    settings: gtk::Button,
+    copy: gtk::Button,
     save: gtk::Button,
     cancel: gtk::Button,
 }
 
+thread_local! {
+    /// The capture window currently open (at most one).
+    static CURRENT: RefCell<Option<Rc<Ui>>> = const { RefCell::new(None) };
+}
+
 struct Ui {
-    app: gtk::Application,
+    app: Rc<App>,
     window: gtk::ApplicationWindow,
     overlay: gtk::Overlay,
     view: SelectionView,
@@ -87,17 +97,16 @@ struct Ui {
     image: RefCell<Option<gdk::Texture>>,
     /// Where `image` was cut from, in screenshot pixels.
     crop: Cell<Option<PixelRect>>,
-    /// The annotation revision currently on the clipboard.
-    copied_revision: Cell<u64>,
-    /// A file dialog is open.
-    saving: Cell<bool>,
+    /// A dialog is open (folder chooser, error).
+    busy: Cell<bool>,
+    closed: Cell<bool>,
 }
 
 /// Show the frozen screenshot fullscreen and wait for a selection.
-pub fn show(app: &gtk::Application, texture: &gdk::Texture) {
+pub fn show(app: &Rc<App>, texture: &gdk::Texture) {
     load_css();
     let window = gtk::ApplicationWindow::builder()
-        .application(app)
+        .application(&app.app)
         .title("klip")
         .decorated(false)
         .build();
@@ -118,14 +127,14 @@ pub fn show(app: &gtk::Application, texture: &gdk::Texture) {
         texture: texture.clone(),
         image: RefCell::default(),
         crop: Cell::new(None),
-        copied_revision: Cell::new(0),
-        saving: Cell::new(false),
+        busy: Cell::new(false),
+        closed: Cell::new(false),
     });
 
-    // This closure holds the only strong reference to `ui`, so it lives as
-    // long as the window (i.e. the whole short-lived process).
+    // `CURRENT` owns the Ui until `close()`.
+    CURRENT.with(|c| c.replace(Some(ui.clone())));
     view.connect_selected(glib::clone!(
-        #[strong]
+        #[weak]
         ui,
         move |widget_rect, image_rect| ui.on_selected(widget_rect, image_rect)
     ));
@@ -141,9 +150,27 @@ pub fn show(app: &gtk::Application, texture: &gdk::Texture) {
     ui.connect_buttons();
     ui.connect_keys();
 
+    ui.window.connect_close_request(glib::clone!(
+        #[weak]
+        ui,
+        #[upgrade_or]
+        glib::Propagation::Proceed,
+        move |_| {
+            ui.close(false);
+            glib::Propagation::Stop
+        }
+    ));
+    if let Some(token) = app.take_activation_token() {
+        ui.window.set_startup_id(&token);
+    }
     ui.window.fullscreen();
     ui.window.present();
     test_select_hook(&view);
+}
+
+/// Raise the open capture window, if any. Returns whether there was one.
+pub fn present_current() -> bool {
+    CURRENT.with(|c| c.borrow().as_ref().map(|ui| ui.window.present()).is_some())
 }
 
 /// Test hook: `KLIP_TEST_SELECT=x,y,w,h` (widget coordinates) makes that
@@ -259,20 +286,41 @@ fn build_toolbar() -> Toolbar {
     root.append(&color);
     root.append(&separator());
 
+    let settings = gtk::Button::builder()
+        .icon_name("emblem-system-symbolic")
+        .tooltip_text("Settings")
+        .focusable(false)
+        .css_classes(["tool"])
+        .build();
+    root.append(&settings);
+    root.append(&separator());
+
+    let copy = button(
+        "Copy",
+        "edit-copy-symbolic",
+        "Copy to the clipboard and close (Enter, Ctrl+C)",
+    );
+    copy.add_css_class("suggested-action");
+    root.append(&copy);
     let save = button(
         "Save",
         "document-save-symbolic",
-        "Save as PNG (Enter, Ctrl+S)",
+        "Save as PNG in the screenshot folder and close (Ctrl+S)",
     );
-    save.add_css_class("suggested-action");
     root.append(&save);
-    let cancel = button("Cancel", "window-close-symbolic", "Close (Esc)");
+    let cancel = button(
+        "Cancel",
+        "window-close-symbolic",
+        "Close without copying (Esc)",
+    );
     root.append(&cancel);
     Toolbar {
         root,
         tools,
         swatches,
         color,
+        settings,
+        copy,
         save,
         cancel,
     }
@@ -281,6 +329,11 @@ fn build_toolbar() -> Toolbar {
 impl Ui {
     fn connect_buttons(self: &Rc<Self>) {
         let tb = &self.toolbar;
+        tb.copy.connect_clicked(glib::clone!(
+            #[weak(rename_to = ui)]
+            self,
+            move |_| ui.copy()
+        ));
         tb.save.connect_clicked(glib::clone!(
             #[weak(rename_to = ui)]
             self,
@@ -289,7 +342,12 @@ impl Ui {
         tb.cancel.connect_clicked(glib::clone!(
             #[weak(rename_to = ui)]
             self,
-            move |_| ui.close()
+            move |_| ui.close(false)
+        ));
+        tb.settings.connect_clicked(glib::clone!(
+            #[weak(rename_to = ui)]
+            self,
+            move |_| settings::open(&ui.app, Some(ui.window.upcast_ref()))
         ));
         for (tool, b) in &tb.tools {
             let tool = *tool;
@@ -360,9 +418,13 @@ impl Ui {
             glib::Propagation::Proceed,
             move |_, key, _, modifiers| {
                 let ctrl = modifiers.contains(gdk::ModifierType::CONTROL_MASK);
+                if ui.busy.get() {
+                    return glib::Propagation::Proceed;
+                }
                 match key {
-                    gdk::Key::Escape => ui.close(),
-                    gdk::Key::Return | gdk::Key::KP_Enter => ui.save(),
+                    gdk::Key::Escape => ui.close(false),
+                    gdk::Key::Return | gdk::Key::KP_Enter => ui.copy(),
+                    gdk::Key::c | gdk::Key::C if ctrl => ui.copy(),
                     gdk::Key::s | gdk::Key::S if ctrl => ui.save(),
                     gdk::Key::z | gdk::Key::Z if ctrl => ui.view.undo(),
                     _ if !ctrl && ui.image.borrow().is_some() && ui.handle_tool_key(key) => {}
@@ -374,8 +436,7 @@ impl Ui {
         self.window.add_controller(keys);
     }
 
-    /// A selection was made (or replaced): copy it right away and show the
-    /// toolbar next to it.
+    /// A selection was made (or replaced): show the toolbar next to it.
     fn on_selected(&self, widget_rect: Rect, image_rect: Rect) {
         let (w, h) = (self.texture.width(), self.texture.height());
         let Some(px) = geometry::to_pixels(image_rect, w, h) else {
@@ -383,10 +444,8 @@ impl Ui {
         };
         crate::debug!("selection {widget_rect:?} -> image pixels {px:?}");
         let image = output::crop(&self.texture, px);
-        output::copy_to_clipboard(&self.window.clipboard(), &image);
         self.image.replace(Some(image));
         self.crop.set(Some(px));
-        self.copied_revision.set(self.view.revision());
         self.place_toolbar(widget_rect);
     }
 
@@ -427,50 +486,61 @@ impl Ui {
         rect
     }
 
-    /// Save the selection through a file dialog (the portal FileChooser on
-    /// GNOME), then close.
-    fn save(self: &Rc<Self>) {
-        if self.saving.get() {
-            return;
-        }
-        // Update the clipboard now, while our window still has focus.
-        self.sync_clipboard();
+    /// Copy the (annotated) selection to the clipboard and close.
+    fn copy(&self) {
         let Some(image) = self.final_image() else {
             return;
         };
-        self.saving.set(true);
-        let dialog = gtk::FileDialog::builder()
-            .title("Save screenshot")
-            .initial_name(default_file_name())
-            .modal(true)
-            .build();
-        if let Some(dir) = glib::user_special_dir(glib::UserDirectory::Pictures)
-            .filter(|d| d.is_dir())
-            .or_else(|| Some(glib::home_dir()))
-        {
-            dialog.set_initial_folder(Some(&gio::File::for_path(dir)));
+        crate::debug!("copying with {} annotations", self.view.shapes().len());
+        output::copy_to_clipboard(&self.window.clipboard(), &image);
+        self.close(true);
+    }
+
+    /// Save to the configured folder (asked once, on the first Save), then
+    /// close.
+    fn save(self: &Rc<Self>) {
+        if self.busy.get() {
+            return;
         }
+        let Some(image) = self.final_image() else {
+            return;
+        };
         let ui = self.clone();
         glib::spawn_future_local(async move {
-            let result = dialog.save_future(Some(&ui.window)).await;
-            ui.saving.set(false);
+            ui.busy.set(true);
+            let configured = ui.app.config.borrow().save_dir.clone();
+            let dir = match configured {
+                Some(dir) => Some(dir),
+                None => settings::choose_folder(&ui.app, Some(ui.window.upcast_ref())).await,
+            };
+            ui.busy.set(false);
+            // No folder chosen: back to the selection.
+            let Some(dir) = dir else { return };
+            let result = std::fs::create_dir_all(&dir)
+                .map_err(|e| e.to_string())
+                .and_then(|()| {
+                    let path = unique_path(&dir, &default_file_name());
+                    output::save_png(&gtk::gio::File::for_path(&path), &image)
+                        .map(|()| path)
+                        .map_err(|e| e.to_string())
+                });
             match result {
-                Ok(file) => match output::save_png(&file, &image) {
-                    Ok(()) => ui.close(),
-                    Err(err) => ui.show_error("Could not save the screenshot", &err),
-                },
-                // The user closed the dialog: back to the selection.
-                Err(err) if err.matches(gtk::DialogError::Dismissed) => {}
-                Err(err) => ui.show_error("Could not open the file dialog", &err),
+                Ok(path) => {
+                    crate::debug!("saved {}", path.display());
+                    println!("{}", path.display());
+                    ui.app.notify_saved(&path);
+                    ui.close(false);
+                }
+                Err(err) => ui.show_error("Could not save the screenshot", &err),
             }
         });
     }
 
-    fn show_error(&self, message: &str, err: &glib::Error) {
+    fn show_error(&self, message: &str, err: &str) {
         eprintln!("klip: {message}: {err}");
         gtk::AlertDialog::builder()
             .message(message)
-            .detail(err.message())
+            .detail(err)
             .modal(true)
             .build()
             .show(Some(&self.window));
@@ -495,34 +565,31 @@ impl Ui {
         }
     }
 
-    /// Re-copy if the annotations changed since the last copy.
-    fn sync_clipboard(&self) {
-        let revision = self.view.revision();
-        if revision == self.copied_revision.get() {
+    /// Copy / Save / Cancel / Esc: close the window. `copied`: the image is
+    /// on the clipboard, which this process must keep serving.
+    fn close(&self, copied: bool) {
+        if self.busy.get() || self.closed.replace(true) {
             return;
         }
-        if let Some(image) = self.final_image() {
-            crate::debug!("re-copying with {} annotations", self.view.shapes().len());
-            output::copy_to_clipboard(&self.window.clipboard(), &image);
-            self.copied_revision.set(revision);
-        }
+        crate::debug!("closing (copied: {copied})");
+        self.window.destroy();
+        let ui = CURRENT.with(|c| c.take());
+        self.app.capture_done(copied);
+        drop(ui);
     }
+}
 
-    /// Cancel / Esc / after saving. Without a selection klip just exits. With
-    /// one, the (annotated) copy stays on the clipboard: hide the window and keep serving
-    /// it until another app takes over.
-    fn close(&self) {
-        if self.saving.get() {
-            return;
-        }
-        if self.image.borrow().is_none() {
-            self.app.quit();
-            return;
-        }
-        self.sync_clipboard();
-        self.window.set_visible(false);
-        output::keep_clipboard_alive(&self.app, &self.window.clipboard());
+/// `dir/name`, or `dir/name-2.png` etc. if that exists already.
+fn unique_path(dir: &Path, name: &str) -> PathBuf {
+    let path = dir.join(name);
+    if !path.exists() {
+        return path;
     }
+    let stem = name.trim_end_matches(".png");
+    (2..)
+        .map(|i| dir.join(format!("{stem}-{i}.png")))
+        .find(|p| !p.exists())
+        .expect("some free name")
 }
 
 /// e.g. `klip-2026-11-23_20-59-03.png`
