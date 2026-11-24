@@ -40,19 +40,23 @@ no wlr-layer-shell or wlr-screencopy (GNOME supports neither).
 4. **Output**: Copy puts the cropped (and annotated) image on the clipboard as
    `image/png` via the GDK clipboard. Because Wayland drops clipboard content
    when the owning app exits, klip keeps running until something else takes
-   the clipboard (or 10 minutes pass); in background mode it runs anyway.
+   the clipboard (or 10 minutes pass); normally klip runs in the background
+   anyway.
    Save writes a PNG to the configured folder.
 
-klip is a single-instance GTK application (`io.github.schonbeck.klip`): if
-klip already runs in the background, running `klip` again just asks that
-instance to take a screenshot.
+klip is a single-instance GTK application (`io.github.schonbeck.klip`). The
+work is done by one background klip (`klip --daemon`). A plain `klip` (from
+a terminal, the app grid or the shortcut) starts that background klip if it
+isn't running, as a separate process detached from the terminal (its own
+session, output in `~/.local/state/klip/klip.log`), hands it the request,
+and exits right away.
 
 ### Global shortcut
 
 - **GNOME (default there)**: a GNOME custom keybinding, set through
   `gsettings` (`org.gnome.settings-daemon.plugins.media-keys`, entry
   `custom-keybindings/klip/`), that runs `klip`. No dialog, and it works even
-  when klip isn't running (a press then starts a one-shot klip). You'll see
+  when klip isn't running (a press then starts the background klip). You'll see
   it in Settings → Keyboard → View and Customize Shortcuts → Custom
   Shortcuts.
 - **Other desktops** (KDE, Hyprland, ...): the xdg-desktop-portal
@@ -116,11 +120,12 @@ cargo build --release
 ./target/release/klip
 ```
 
-There are no setup questions. The first launch saves the default settings
-(`~/.config/klip/config.ini`), turns on start at login, and this klip stays
-in the background right away (shortcut Ctrl+Alt+P, tray icon). Then it
-takes the screenshot. If you turn off start at login in the settings, it
-stays off, and `klip` runs one-shot.
+There are no setup questions, and the terminal is free again right away.
+The first launch saves the default settings (`~/.config/klip/config.ini`),
+turns on start at login and starts klip in the background (shortcut
+Ctrl+Alt+P, tray icon), which then takes the screenshot. If you turn off
+start at login in the settings, it stays off; `klip` still starts the
+background klip for the current session (Quit in the tray stops it).
 
 The screen freezes and dims. Drag a rectangle with the left mouse button; a
 toolbar appears next to the selection:
@@ -144,16 +149,17 @@ toolbar appears next to the selection:
   into the copied or saved PNG.
 - With the Select tool (the default), drag again to replace the selection
   (annotations are cleared).
-- After **Copy** a one-shot `klip` keeps running in the background, because
-  on Wayland the clipboard content is served by the app that copied it. It
-  exits as soon as something else is copied, or after 10 minutes.
+- After **Copy** the image stays available because klip keeps running in
+  the background: on Wayland the clipboard content is served by the app that
+  copied it.
 
 ### Background mode, start at login, shortcut
 
 ```sh
-klip --daemon      # stay in the background: shortcut + tray icon
-klip               # take a screenshot (in the running klip, if there is one)
-klip --settings    # open the settings
+klip               # take a screenshot (starts the background klip if needed)
+klip --settings    # open the settings (likewise)
+klip --daemon      # run the background klip in this terminal (for debugging;
+                   # Ctrl+C stops it), or do nothing if it's already running
 ```
 
 - **Settings** (gear in the toolbar, tray menu, `klip --settings`, or the
@@ -164,21 +170,37 @@ klip --settings    # open the settings
   (with git commit), license and website. Stored in `~/.config/klip/config.ini`.
 - **Start at login** writes `~/.config/autostart/io.github.schonbeck.klip.desktop`
   (runs `klip --daemon`); turning it off removes the file. The first launch
-  writes it silently (only when there's no config file yet). While it's on,
-  a plain `klip` with no background klip running becomes the background one. This uses XDG
+  writes it silently (only when there's no config file yet), and the
+  background klip rewrites it on start, so it always names the current
+  binary (with Homebrew `<prefix>/bin/klip`, not the versioned
+  `Cellar/klip/<version>/bin/klip` that `brew upgrade` removes). This uses XDG
   autostart rather than a systemd user unit: it works on every desktop,
   needs no `systemctl` calls, only runs in a graphical session (which a
   screenshot tool needs anyway), and Settings → Apps lists it as a startup
   app on GNOME.
 - klip also installs `~/.local/share/applications/io.github.schonbeck.klip.desktop`
-  (opens the settings; right-click → "Take Screenshot"). Desktops use it
-  for the app name in notifications and permission dialogs.
+  (opens the settings; right-click → "Take Screenshot"), unless a package
+  (the .deb) installed one in `/usr/share/applications`. Homebrew's own copy
+  lives in `<prefix>/share`, which GNOME doesn't search, so with Homebrew
+  this is the one in the app grid. Desktops also use it for the app name in
+  notifications and permission dialogs. Closing the settings window leaves
+  the background klip running.
 - **Tray icon** (background mode): click for the menu: Take Screenshot,
   Settings, About klip, Quit. It needs a StatusNotifierItem host, like Ubuntu's
   AppIndicator extension (on by default on Ubuntu) or KDE. Without one,
   klip runs without a tray icon.
-- **Quit** in the tray menu stops background mode. If klip uses the GNOME
-  custom keybinding, the key keeps working (it starts a one-shot klip).
+- **Quit** in the tray menu stops the background klip. If klip uses the
+  GNOME custom keybinding, the key keeps working (it starts klip again).
+
+### Coming from 0.1.0
+
+0.1.0 ran the background klip inside the terminal that started it (the
+prompt didn't come back, and Ctrl+C or closing the terminal ended it), and
+the app-grid entry opened the settings in a klip that quit when the window
+closed. With Homebrew its autostart entry and app-grid entry also named the
+versioned Cellar path. 0.1.1 fixes all of this, and rewrites both entries
+the first time it runs, so after upgrading just run `pkill -x klip; klip`
+once.
 
 ### Coming from an earlier build of this branch
 

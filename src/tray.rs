@@ -38,6 +38,11 @@ impl ksni::Tray for KlipTray {
     fn icon_name(&self) -> String {
         self.icon.clone()
     }
+    fn icon_theme_path(&self) -> String {
+        crate::desktop::extra_icon_dir()
+            .map(|d| d.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
     fn tool_tip(&self) -> ksni::ToolTip {
         ksni::ToolTip {
             title: "klip".into(),

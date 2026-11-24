@@ -47,6 +47,12 @@ impl App {
         if let Err(err) = desktop::install_launcher() {
             eprintln!("klip: could not write the .desktop file: {err}");
         }
+        // Homebrew's icon dir isn't one GTK searches by itself.
+        if let (Some(dir), Some(display)) =
+            (desktop::extra_icon_dir(), gtk::gdk::Display::default())
+        {
+            gtk::IconTheme::for_display(&display).add_search_path(dir);
+        }
         Rc::new(Self {
             app: app.clone(),
             config: RefCell::new(Config::load().unwrap_or_default()),
@@ -118,7 +124,15 @@ impl App {
                     println!("klip is already running in the background");
                 }
                 Action::Daemon => this.become_daemon().await,
-                Action::Settings => settings::open(&this, None),
+                Action::Settings => {
+                    // Normally the detached background klip runs this; if it
+                    // couldn't be started, keep this one running instead, so
+                    // closing the window doesn't take the shortcut away.
+                    if this.config.borrow().autostart && !this.is_daemon() {
+                        this.become_daemon().await;
+                    }
+                    settings::open(&this, None)
+                }
                 Action::Capture(file) => {
                     // With "start at login" on, klip is meant to be running in
                     // the background: if it isn't yet (e.g. right after
@@ -163,6 +177,13 @@ impl App {
     async fn become_daemon(self: &Rc<Self>) {
         self.daemon.replace(Some(self.app.hold()));
         crate::debug!("running in the background");
+        // Keep the autostart entry pointing at this binary (an older one may
+        // name a path that's gone, e.g. a Homebrew Cellar version).
+        if self.config.borrow().autostart
+            && let Err(err) = desktop::set_autostart(true)
+        {
+            eprintln!("klip: could not update start at login: {err}");
+        }
         self.apply_shortcut().await;
         let this = Rc::downgrade(self);
         let tray = tray::spawn(move |cmd, token| {
