@@ -14,13 +14,14 @@ yet; build from source.
   the settings, then **Copy**, **Save** and **Cancel**.
 - **Copy** puts the PNG on the clipboard and closes. Nothing is copied
   unless you click Copy (or press Enter).
-- **Save** writes the PNG to your screenshot folder without asking (the
-  folder is asked once, on the first Save, and can be changed in the
-  settings) and closes.
+- **Save** writes the PNG to `~/Pictures/Screenshots` without asking (the
+  folder can be changed in the settings) and closes.
 - Annotate with arrows, lines and circles/ellipses, in a color you pick.
-- Runs in the background (`klip --daemon`, started at login if you like) with
-  a configurable global keyboard shortcut (default Super+Shift+S) and a tray
-  icon.
+- No setup questions: klip starts with sensible defaults (save to
+  `~/Pictures/Screenshots`, start at login, Super+Shift+S), all changeable in
+  the settings.
+- Runs in the background (started at login) with a configurable global
+  keyboard shortcut and a tray icon.
 - PNG only. Small and simple on purpose.
 
 ## Approach
@@ -48,26 +49,23 @@ instance to take a screenshot.
 
 ### Global shortcut
 
-In background mode klip registers the shortcut itself, in this order:
+- **GNOME (default there)**: a GNOME custom keybinding, set through
+  `gsettings` (`org.gnome.settings-daemon.plugins.media-keys`, entry
+  `custom-keybindings/klip/`), that runs `klip`. No dialog, and it works even
+  when klip isn't running (a press then starts a one-shot klip). You'll see
+  it in Settings → Keyboard → View and Customize Shortcuts → Custom
+  Shortcuts.
+- **Other desktops** (KDE, Hyprland, ...): the xdg-desktop-portal
+  `GlobalShortcuts` API, while klip runs in the background. If the portal is
+  missing or fails, klip falls back to the GNOME keybinding when available.
 
-1. **GlobalShortcuts portal** (xdg-desktop-portal; GNOME 48+, KDE, Hyprland).
-   On GNOME the first time shows an "Add Keyboard Shortcuts" dialog; click
-   **Add**. Works only while klip runs in the background.
-2. **GNOME custom keybinding** (fallback): if the portal is missing or fails,
-   klip adds a custom shortcut through `gsettings`
-   (`org.gnome.settings-daemon.plugins.media-keys`, entry
-   `custom-keybindings/klip/`) that runs `klip`. It also works when klip is
-   not running (each press then starts a one-shot klip). You'll see it in
-   Settings → Keyboard → View and Customize Shortcuts → Custom Shortcuts.
-
-GNOME remembers the key accepted in the portal dialog and from then on
-treats the app's key as a suggestion only (and its portal has no "change
-shortcut" call yet). So if you pick a different key in klip's settings
-than the one GNOME keeps, klip switches to the GNOME custom keybinding with
-your key. Either way the key set in klip's settings is the one that works.
-When klip uses the portal it removes its custom keybinding, so the key
-never fires twice. `KLIP_SHORTCUT_BACKEND=portal` or `=gnome` forces one
-way (for testing).
+Why not the portal on GNOME: GNOME 50 supports it, but the first time shows
+an "Add Keyboard Shortcuts" confirmation dialog, then keeps its own copy of
+the key and ignores later changes from the app (its portal has no "change
+shortcut" call yet). The custom keybinding has neither problem. Even with
+the portal, klip switches to the keybinding if the desktop keeps a different
+key than the one set in klip's settings. `KLIP_SHORTCUT_BACKEND=portal` or
+`=gnome` forces one way (for testing).
 
 ## Stack
 
@@ -97,9 +95,11 @@ cargo build --release
 ./target/release/klip
 ```
 
-The first time, klip asks **"Start klip automatically at login?"**. Saying
-yes makes this klip stay in the background right away (with the shortcut and
-tray icon) and starts it at every login. Then it takes the screenshot.
+There are no setup questions. The first launch saves the default settings
+(`~/.config/klip/config.ini`), turns on start at login, and this klip stays
+in the background right away (shortcut Super+Shift+S, tray icon). Then it
+takes the screenshot. If you turn off start at login in the settings, it
+stays off, and `klip` runs one-shot.
 
 The screen freezes and dims. Drag a rectangle with the left mouse button; a
 toolbar appears next to the selection:
@@ -114,9 +114,9 @@ toolbar appears next to the selection:
 | Undo the last shape | | Ctrl+Z |
 | Settings | ⚙ | |
 
-- **Save** names the file `klip-YYYY-MM-DD_HH-MM-SS.png` (with `-2` etc. if
-  that exists). The first Save asks for the folder once and remembers it;
-  after that there's no dialog, just a "Screenshot saved" notification with
+- **Save** writes `klip-YYYY-MM-DD_HH-MM-SS.png` (with `-2` etc. if that
+  exists) to `~/Pictures/Screenshots` (created if needed; the XDG pictures
+  folder), with no dialog, and shows a "Screenshot saved" notification with
   the path. Change the folder in the settings.
 - **Annotate**: pick Arrow, Line or Ellipse and drag inside the selection.
   Picking a color also switches from Select to Arrow. Annotations are baked
@@ -136,11 +136,14 @@ klip --settings    # open the settings
 ```
 
 - **Settings** (gear in the toolbar, tray menu, `klip --settings`, or the
-  "klip" entry in the app grid): the save folder, **Start at login** and the
+  "klip" entry in the app grid): the save folder (default
+  `~/Pictures/Screenshots`), **Start at login** (default on) and the
   **screenshot shortcut** (click the button, press the new keys; Esc
   cancels). Changes apply right away. Stored in `~/.config/klip/config.ini`.
 - **Start at login** writes `~/.config/autostart/io.github.schonbeck.klip.desktop`
-  (runs `klip --daemon`); turning it off removes the file. This uses XDG
+  (runs `klip --daemon`); turning it off removes the file. The first launch
+  writes it silently (only when there's no config file yet). While it's on,
+  a plain `klip` with no background klip running becomes the background one. This uses XDG
   autostart rather than a systemd user unit: it works on every desktop,
   needs no `systemctl` calls, only runs in a graphical session (which a
   screenshot tool needs anyway), and Settings → Apps lists it as a startup
@@ -155,14 +158,35 @@ klip --settings    # open the settings
 - **Quit** in the tray menu stops background mode. If klip uses the GNOME
   custom keybinding, the key keeps working (it starts a one-shot klip).
 
+### Coming from an earlier build of this branch
+
+An earlier build asked "Start klip automatically at login?" and saved the
+answer. To start over with the defaults:
+
+```sh
+pkill -x klip
+rm -f ~/.config/klip/config.ini ~/.config/autostart/io.github.schonbeck.klip.desktop
+```
+
+If you clicked **Add** in GNOME's "Add Keyboard Shortcuts" dialog back then,
+GNOME keeps that entry, unused (klip now uses a custom keybinding on GNOME).
+Remove it in Settings → Apps → klip, or with
+`dconf reset -f /org/gnome/settings-daemon/global-shortcuts/io.github.schonbeck.klip/`.
+
 ### Permissions and other notes
 
-- GNOME asks once **"Allow klip to Take Screenshots?"**; allow it. (Older
-  klip builds ran as an unnamed app, so you may be asked again.) It can be
-  changed later in Settings → Privacy. GNOME can't show that question while
-  no app window has focus (for example when you press the shortcut on an
-  empty desktop): klip then shows "Could not take a screenshot". Click
-  **Try Again** there and GNOME's question appears.
+- **Screenshot permission**: GNOME's screenshot portal asks "Allow klip to
+  Take Screenshots?" the first time an app uses it. klip registers with the
+  portal under its own app id (`io.github.schonbeck.klip`; needed for the
+  portal shortcut and for notifications), and older builds ran as an unnamed
+  app, which is why a new question appeared. To avoid the dialog, klip
+  records "yes" for its app id in the portal permission store before its
+  first screenshot (`org.freedesktop.impl.portal.PermissionStore`, table
+  `screenshot`). That's the same entry GNOME's dialog writes and Settings →
+  Privacy → Screenshots shows. An existing answer, including "no", is left
+  alone. If the screenshot still fails (GNOME Shell can't show its question
+  while no window has focus), klip shows "Could not take a screenshot" with
+  **Try Again**, and the retry brings up GNOME's question.
 - `KLIP_DEBUG=1 klip` prints debug info (version and git commit, screenshot
   and window size, scale, selection, toolbar position, shortcut setup).
   `klip --version` shows the commit it was built from.

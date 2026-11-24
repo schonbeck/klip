@@ -57,7 +57,11 @@ org.freedesktop.DBus.Properties.Set org.gnome.Shell OverviewActive "<false>"`.
   The GlobalShortcuts portal also goes through Shell's GrabAccelerators.
 - Tray icon: `gnome-extensions enable ubuntu-appindicators@ubuntu.com`
   (installed, but off in this container) provides the StatusNotifierWatcher.
-- klip registers with the portal as `io.github.schonbeck.klip`, so the
-  screenshot permission is asked again for that app id. GNOME Shell 50 can't
-  show that dialog without a focused app (`focus_app is null` in the journal);
-  klip's "Try Again" window handles that.
+- klip registers with the portal as `io.github.schonbeck.klip` and records
+  "yes" for that id in the permission store before its first screenshot (if
+  there's no answer yet). To test from a clean state:
+  `busctl --user call org.freedesktop.impl.portal.PermissionStore /org/freedesktop/impl/portal/PermissionStore org.freedesktop.impl.portal.PermissionStore DeletePermission sss screenshot screenshot io.github.schonbeck.klip`.
+  If GNOME has to ask, Shell 50 can't show that dialog without a focused app
+  (`focus_app is null` in the journal); klip's "Try Again" window handles that.
+- Fresh config: `rm -rf ~/.config/klip ~/.config/autostart/io.github.schonbeck.klip.desktop`,
+  and `gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "[]"`.
