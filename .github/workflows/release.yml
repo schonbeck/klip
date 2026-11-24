@@ -79,10 +79,11 @@ jobs:
           generate_release_notes: true
 
   homebrew:
-    # Bumps Formula/klip.rb in schonbeck/homebrew-tap. Needs a repository
-    # secret HOMEBREW_TAP_TOKEN (fine-grained token with contents:write on the
-    # tap); without it this job is skipped and the bump is manual
-    # (packaging/bump-formula.sh).
+    # Opens a formula bump PR in schonbeck/homebrew-tap; the tap's CI builds
+    # the bottle, and adding the `pr-pull` label there publishes it. Needs a
+    # repository secret HOMEBREW_TAP_TOKEN (fine-grained token for the tap
+    # only, with Contents and Pull requests read/write); without it this job
+    # is skipped and the bump PR is made by hand (packaging/bump-formula.sh).
     needs: deb
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
@@ -90,8 +91,10 @@ jobs:
       TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-      - name: Bump formula
+      - name: Open formula bump PR
         if: env.TAP_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           v="${GITHUB_REF_NAME#v}"
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/schonbeck/homebrew-tap.git" tap
@@ -99,4 +102,9 @@ jobs:
           cd tap
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "klip ${v}" && git push
+          git checkout -b "klip-${v}"
+          git commit -am "klip ${v}"
+          git push origin "klip-${v}"
+          gh pr create -R schonbeck/homebrew-tap --base main --head "klip-${v}" \
+            --title "klip ${v}" \
+            --body "Release https://github.com/schonbeck/klip/releases/tag/v${v}. When CI is green, add the \`pr-pull\` label to publish the bottle and land this PR."

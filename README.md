@@ -323,10 +323,14 @@ headless GNOME Shell.
 - **Homebrew**: the formula lives in
   [schonbeck/homebrew-tap](https://github.com/schonbeck/homebrew-tap)
   (template: `packaging/homebrew/klip.rb`). It builds from the release source
-  tarball. After a release, `packaging/bump-formula.sh X.Y.Z
-  path/to/homebrew-tap/Formula/klip.rb` updates its url and sha256. The release
-  workflow does that automatically if the repository secret
-  `HOMEBREW_TAP_TOKEN` is set (a token that can push to the tap).
+  tarball, and `brew install` pours a prebuilt bottle (x86_64 Linux) when the
+  tap has one. After a release, a PR in the tap runs `packaging/bump-formula.sh
+  X.Y.Z Formula/klip.rb` (url and sha256). The tap's CI (`brew test-bot`)
+  builds the bottle; adding the `pr-pull` label to that PR uploads it to a
+  release of the tap, adds the `bottle do` block and lands the PR. The release
+  workflow opens the bump PR automatically if the repository secret
+  `HOMEBREW_TAP_TOKEN` is set (a fine-grained token for the tap with Contents
+  and Pull requests read/write); otherwise the PR is made by hand.
 - No PPA or apt repository yet. Later, optionally: Flatpak on Flathub. Snap
   is a poor fit (its sandbox makes screenshots and the clipboard awkward).
 
