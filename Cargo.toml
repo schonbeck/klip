@@ -1,6 +1,6 @@
 [package]
 name = "klip"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.92"
 description = "A simple Wayland screenshot tool"
@@ -15,6 +15,7 @@ publish = false
 ashpd = { version = "0.14.3", default-features = false, features = ["async-io", "screenshot", "global_shortcuts"] }
 futures-channel = "0.3"
 futures-util = { version = "0.3", default-features = false }
+libc = "0.2"
 gtk = { version = "0.11.5", package = "gtk4", features = ["v4_12"] }
 ksni = { version = "0.3", default-features = false, features = ["async-io"] }
 

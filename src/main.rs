@@ -11,6 +11,7 @@ mod annotate;
 mod app;
 mod capture;
 mod config;
+mod daemon;
 mod desktop;
 mod geometry;
 mod output;
@@ -105,6 +106,13 @@ fn main() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     debug!("klip {VERSION}");
+    let action = parse_args(&args, |p| Some(p.into())).expect("checked above");
+    if !matches!(action, Action::Daemon) {
+        // Run the background klip as its own process, detached from this
+        // terminal, and hand it the request below (GApplication forwards the
+        // command line to the running instance and this process exits).
+        daemon::ensure_running();
+    }
 
     let app = gtk::Application::builder()
         .application_id(APP_ID)
