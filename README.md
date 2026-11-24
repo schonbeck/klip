@@ -1,18 +1,27 @@
 # klip
 
 A tiny, native Wayland region screenshot tool for Linux. Press a hotkey, drag a
-rectangle, annotate if you like, and the PNG is on your clipboard.
+rectangle, annotate if you like, then Copy or Save.
 
-Status: milestone 3 (capture, select, copy to clipboard, Save / Cancel,
-annotations). No packages yet; build from source.
+Status: milestone 4 (capture, select, annotate, Copy / Save / Cancel,
+settings, background mode with a global shortcut and tray icon). No packages
+yet; build from source.
 
 ## What it does
 
 - Region screenshot: drag a rectangle with the left mouse button held down.
-- The PNG is copied to the clipboard automatically after the selection.
-- Clearly visible **Save** (writes a PNG file) and **Cancel** buttons.
+- A toolbar next to the selection: annotation tools and colors, a gear for
+  the settings, then **Copy**, **Save** and **Cancel**.
+- **Copy** puts the PNG on the clipboard and closes. Nothing is copied
+  unless you click Copy (or press Enter).
+- **Save** writes the PNG to `~/Pictures/Screenshots` without asking (the
+  folder can be changed in the settings) and closes.
 - Annotate with arrows, lines and circles/ellipses, in a color you pick.
-- A configurable global keyboard shortcut starts a region screenshot.
+- No setup questions: klip starts with sensible defaults (save to
+  `~/Pictures/Screenshots`, start at login, Ctrl+Alt+P), all changeable in
+  the settings.
+- Runs in the background (started at login) with a configurable global
+  keyboard shortcut and a tray icon.
 - PNG only. Small and simple on purpose.
 
 ## Approach
@@ -28,25 +37,41 @@ no wlr-layer-shell or wlr-screencopy (GNOME supports neither).
 3. **Annotate**: in the same window, a small toolbar with arrow, line, ellipse,
    color picker, Save and Cancel. Drawing happens on a GTK4 drawing area with
    cairo.
-4. **Output**: the cropped (and annotated) image is put on the clipboard as
+4. **Output**: Copy puts the cropped (and annotated) image on the clipboard as
    `image/png` via the GDK clipboard. Because Wayland drops clipboard content
-   when the owning app exits, klip stays alive in the background until
-   something else takes the clipboard (or a timeout passes). Save writes a PNG
-   through a file dialog (portal FileChooser).
+   when the owning app exits, klip keeps running until something else takes
+   the clipboard (or 10 minutes pass); in background mode it runs anyway.
+   Save writes a PNG to the configured folder.
+
+klip is a single-instance GTK application (`io.github.schonbeck.klip`): if
+klip already runs in the background, running `klip` again just asks that
+instance to take a screenshot.
 
 ### Global shortcut
 
-- **Default on GNOME**: `klip --install-shortcut "<Super><Shift>s"` registers a
-  GNOME custom keybinding with `gsettings` that runs `klip`. Documented manual
-  `gsettings` commands too.
-- **Portal route**: the xdg-desktop-portal `GlobalShortcuts` API (GNOME 48+,
-  KDE, Hyprland). Needs klip running as a small background service, so it is
-  optional (`klip --daemon`).
+- **GNOME (default there)**: a GNOME custom keybinding, set through
+  `gsettings` (`org.gnome.settings-daemon.plugins.media-keys`, entry
+  `custom-keybindings/klip/`), that runs `klip`. No dialog, and it works even
+  when klip isn't running (a press then starts a one-shot klip). You'll see
+  it in Settings → Keyboard → View and Customize Shortcuts → Custom
+  Shortcuts.
+- **Other desktops** (KDE, Hyprland, ...): the xdg-desktop-portal
+  `GlobalShortcuts` API, while klip runs in the background. If the portal is
+  missing or fails, klip falls back to the GNOME keybinding when available.
+
+Why not the portal on GNOME: GNOME 50 supports it, but the first time shows
+an "Add Keyboard Shortcuts" confirmation dialog, then keeps its own copy of
+the key and ignores later changes from the app (its portal has no "change
+shortcut" call yet). The custom keybinding has neither problem. Even with
+the portal, klip switches to the keybinding if the desktop keeps a different
+key than the one set in klip's settings. `KLIP_SHORTCUT_BACKEND=portal` or
+`=gnome` forces one way (for testing).
 
 ## Stack
 
 **Rust + GTK4** (gtk4-rs), with [ashpd](https://github.com/bilelmoussaoui/ashpd)
-for the portals. One small, fast-starting binary (important for a hotkey tool),
+for the portals and [ksni](https://github.com/iovxw/ksni) for the tray icon
+(plain D-Bus, no GTK3). One small, fast-starting binary (important for a hotkey tool),
 no runtime to ship, and straightforward to package.
 
 ## Build from source
@@ -70,38 +95,109 @@ cargo build --release
 ./target/release/klip
 ```
 
-The screen freezes and dims. Drag a rectangle with the left mouse button; when
-you let go, the region is **already on the clipboard** and a toolbar appears
-next to the selection:
+There are no setup questions. The first launch saves the default settings
+(`~/.config/klip/config.ini`), turns on start at login, and this klip stays
+in the background right away (shortcut Ctrl+Alt+P, tray icon). Then it
+takes the screenshot. If you turn off start at login in the settings, it
+stays off, and `klip` runs one-shot.
 
-- **Save** (or Enter, Ctrl+S): pick a file name (default
-  `~/Pictures/klip-YYYY-MM-DD_HH-MM-SS.png`) and write the PNG. The window
-  then closes; the clipboard copy stays.
-- **Cancel** (or Esc): close the window. The clipboard copy (with any annotations) stays (see below).
-- **Annotate**: pick Arrow (A), Line (L) or Ellipse (E) in the toolbar and
-  drag inside the selection. Colors: the four swatches (keys 1-4; picking one
-  also switches from Select to Arrow) or the color button for any color.
-  Ctrl+Z undoes the last shape. Annotations are baked into the PNG: the
-  clipboard is updated with the annotated image when you Save or close, and
-  the saved file includes them.
-- With the Select tool (S, the default), drag again to replace the selection
-  (it's copied again; annotations are cleared).
-- Esc before selecting anything exits without touching the clipboard.
+The screen freezes and dims. Drag a rectangle with the left mouse button; a
+toolbar appears next to the selection:
 
-- `klip` keeps running in the background after the window closes, because on Wayland the
-  clipboard content is served by the app that copied it. It exits as soon as
-  something else is copied, or after 10 minutes.
+| Action | Button | Keys |
+| --- | --- | --- |
+| Copy to the clipboard and close | **Copy** | Enter, Ctrl+C |
+| Save to the screenshot folder and close | **Save** | Ctrl+S |
+| Close without copying | **Cancel** | Esc |
+| Select a new region / Arrow / Line / Ellipse | ⬚ ↗ ╱ ◯ | S, A, L, E |
+| Colors | swatches, color button | 1-4 |
+| Undo the last shape | | Ctrl+Z |
+| Settings | ⚙ | |
+
+- **Save** writes `klip-YYYY-MM-DD_HH-MM-SS.png` (with `-2` etc. if that
+  exists) to `~/Pictures/Screenshots` (created if needed; the XDG pictures
+  folder), with no dialog, and shows a "Screenshot saved" notification with
+  the path. Change the folder in the settings.
+- **Annotate**: pick Arrow, Line or Ellipse and drag inside the selection.
+  Picking a color also switches from Select to Arrow. Annotations are baked
+  into the copied or saved PNG.
+- With the Select tool (the default), drag again to replace the selection
+  (annotations are cleared).
+- After **Copy** a one-shot `klip` keeps running in the background, because
+  on Wayland the clipboard content is served by the app that copied it. It
+  exits as soon as something else is copied, or after 10 minutes.
+
+### Background mode, start at login, shortcut
+
+```sh
+klip --daemon      # stay in the background: shortcut + tray icon
+klip               # take a screenshot (in the running klip, if there is one)
+klip --settings    # open the settings
+```
+
+- **Settings** (gear in the toolbar, tray menu, `klip --settings`, or the
+  "klip" entry in the app grid): the save folder (default
+  `~/Pictures/Screenshots`), **Start at login** (default on) and the
+  **screenshot shortcut** (click the button, press the new keys; Esc
+  cancels). Changes apply right away. **About klip** shows the version
+  (with git commit), license and website. Stored in `~/.config/klip/config.ini`.
+- **Start at login** writes `~/.config/autostart/io.github.schonbeck.klip.desktop`
+  (runs `klip --daemon`); turning it off removes the file. The first launch
+  writes it silently (only when there's no config file yet). While it's on,
+  a plain `klip` with no background klip running becomes the background one. This uses XDG
+  autostart rather than a systemd user unit: it works on every desktop,
+  needs no `systemctl` calls, only runs in a graphical session (which a
+  screenshot tool needs anyway), and Settings → Apps lists it as a startup
+  app on GNOME.
+- klip also installs `~/.local/share/applications/io.github.schonbeck.klip.desktop`
+  (opens the settings; right-click → "Take Screenshot"). Desktops use it
+  for the app name in notifications and permission dialogs.
+- **Tray icon** (background mode): click for the menu: Take Screenshot,
+  Settings, About klip, Quit. It needs a StatusNotifierItem host, like Ubuntu's
+  AppIndicator extension (on by default on Ubuntu) or KDE. Without one,
+  klip runs without a tray icon.
+- **Quit** in the tray menu stops background mode. If klip uses the GNOME
+  custom keybinding, the key keeps working (it starts a one-shot klip).
+
+### Coming from an earlier build of this branch
+
+An earlier build asked "Start klip automatically at login?" and saved the
+answer, and earlier builds used Super+Shift+S as the default shortcut (now
+Ctrl+Alt+P). Settings are saved with their values, so an existing
+`config.ini` keeps its shortcut until you change it in the settings. To start
+over with the defaults:
+
+```sh
+pkill -x klip
+rm -f ~/.config/klip/config.ini ~/.config/autostart/io.github.schonbeck.klip.desktop
+```
+
+If you clicked **Add** in GNOME's "Add Keyboard Shortcuts" dialog back then,
+GNOME keeps that entry, unused (klip now uses a custom keybinding on GNOME).
+Remove it in Settings → Apps → klip, or with
+`dconf reset -f /org/gnome/settings-daemon/global-shortcuts/io.github.schonbeck.klip/`.
+
+### Permissions and other notes
+
+- **Screenshot permission**: GNOME's screenshot portal asks "Allow klip to
+  Take Screenshots?" the first time an app uses it. klip registers with the
+  portal under its own app id (`io.github.schonbeck.klip`; needed for the
+  portal shortcut and for notifications), and older builds ran as an unnamed
+  app, which is why a new question appeared. To avoid the dialog, klip
+  records "yes" for its app id in the portal permission store before its
+  first screenshot (`org.freedesktop.impl.portal.PermissionStore`, table
+  `screenshot`). That's the same entry GNOME's dialog writes and Settings →
+  Privacy → Screenshots shows. An existing answer, including "no", is left
+  alone. If the screenshot still fails (GNOME Shell can't show its question
+  while no window has focus), klip shows "Could not take a screenshot" with
+  **Try Again**, and the retry brings up GNOME's question.
 - `KLIP_DEBUG=1 klip` prints debug info (version and git commit, screenshot
-  and window size, scale, selection, toolbar position). `klip --version`
-  shows the commit it was built from.
+  and window size, scale, selection, toolbar position, shortcut setup).
+  `klip --version` shows the commit it was built from.
 - `klip --file some.png` uses an existing image instead of a screenshot (for
   testing without the portal).
-- To try it on a hotkey before milestone 4: Settings → Keyboard → View and
-  Customize Shortcuts → Custom Shortcuts, command `/full/path/to/klip`.
-- GNOME asks once "Allow Apps to Take Screenshots?"; allow it (klip waits
-  for the answer). It can be changed later in Settings → Privacy.
-- GNOME plays a shutter sound and flashes the screen when klip starts (see
-  known limits).
+- GNOME plays a shutter sound and flashes the screen with each screenshot
+  (see known limits).
 - The portal saves its screenshot as a file (on GNOME in
   `~/Pictures/Screenshots`); klip deletes that file after loading it, so the
   folder doesn't fill up with full-screen shots.
@@ -122,9 +218,6 @@ next to the selection:
   monitors at *different* scale factors that mapping may be slightly off.
 - Annotations can't be moved or edited after drawing (only undone), and the
   stroke width is fixed.
-- Cancel after a selection does not undo the clipboard copy (it was made the
-  moment you let go). Restoring the previous clipboard isn't possible in
-  general on Wayland, and "copy, then just close" is the common case.
 - The selection can't be resized after release; drag a new one instead.
 - If the copy is taken over by a clipboard manager, klip exits right away
   (which is fine: the manager then holds the image).
@@ -135,17 +228,22 @@ headless GNOME Shell.
 
 ## Code layout
 
-- `src/main.rs`: startup and argument parsing.
-- `src/ui.rs`: the fullscreen window, the toolbar (tools, colors, Save /
-  Cancel), keyboard shortcuts, the file dialog and re-copying after
-  annotating.
+- `src/main.rs`: argument parsing and the single-instance GTK application.
+- `src/app.rs`: what klip does with a command line: first-run question,
+  background mode, shortcut registration, capture, clipboard lifetime.
+- `src/ui.rs`: the fullscreen window, the toolbar (tools, colors, settings,
+  Copy / Save / Cancel), keyboard shortcuts and saving.
+- `src/settings.rs`: the settings window and the save-folder dialog.
+- `src/config.rs`: `~/.config/klip/config.ini`.
+- `src/desktop.rs`: the app's `.desktop` file and the autostart entry.
+- `src/shortcut.rs`: GlobalShortcuts portal and GNOME custom keybinding.
+- `src/tray.rs`: the tray icon (StatusNotifierItem via ksni).
 - `src/annotate.rs`: annotation shapes, drawing them (cairo), baking them
   into the PNG.
 - `src/capture.rs`: portal screenshot via ashpd (or `--file`).
 - `src/selector.rs`: the fullscreen selection widget (drawing and dragging).
 - `src/geometry.rs`: rectangle math, HiDPI and monitor mapping (unit tested).
-- `src/output.rs`: crop, clipboard, PNG saving, and staying alive while we
-  own the clipboard.
+- `src/output.rs`: crop, clipboard and PNG saving.
 
 ## Packaging plan
 
@@ -162,7 +260,7 @@ Nothing is published anywhere public without the owner's explicit OK.
 1. Capture via portal + fullscreen rectangle selection + clipboard copy.
 2. Save / Cancel buttons and PNG save.
 3. Annotation tools (arrow, line, ellipse) and color picker.
-4. Global shortcut (gsettings installer + optional GlobalShortcuts portal).
+4. Copy button, settings, background mode with global shortcut, autostart, tray icon.
 5. CI builds, .deb, Homebrew tap formula.
 
 ## License
